@@ -2,6 +2,24 @@
 
 Modern, hafif ve güvenli bir Windows program kaldırıcı ve artık temizleme masaüstü uygulamasıdır. Electron, React, TypeScript ve Tailwind CSS ile geliştirilmiştir.
 
+## 🇹🇷 0.5.1.5 Toplu Güncelleme
+
+- Kurulu yazılımlar **Masaüstü Programları**, **Store Uygulamaları** ve **Windows Bileşenleri** sekmelerinde ayrıldı.
+- Microsoft Store/MSIX uygulamalarını Windows'un kendi `Remove-AppxPackage` yöntemiyle kaldırma desteği eklendi.
+- Bir program satırına çift tıklayınca güvenli kaldırma onayı açılıyor; işlem onaysız başlamıyor.
+- Windows sistem bileşenleri belirgin şekilde işaretleniyor ve kaldırma öncesinde ek risk uyarısı gösteriliyor.
+- Kurulum tarihine göre sıralama eklendi; hatalı ve gelecekteki Registry tarihleri güvenilmez kabul ediliyor.
+- Tarama, kaldırma ve kalıntı temizleme işlemleri kalıcı hata günlüğüne yazılıyor. Log dosyasına **Ayarlar → Logları Aç** yoluyla ulaşılabilir.
+
+## 🇬🇧 0.5.1.5 Batch Update
+
+- Installed software is separated into **Desktop Programs**, **Store Apps**, and **Windows Components** tabs.
+- Microsoft Store/MSIX apps can be removed through Windows' native `Remove-AppxPackage` mechanism.
+- Double-clicking an app row opens a safe uninstall confirmation; removal never starts without approval.
+- Windows system components are clearly marked and display an additional risk warning before removal.
+- Install-date sorting was added; malformed and future Registry dates are treated as unreliable.
+- Scan, uninstall, and leftover-cleanup operations are written to a persistent diagnostic log. Open it through **Settings → Open Logs**.
+
 ---
 
 ## 🌟 Temel Özellikler
@@ -10,6 +28,7 @@ Modern, hafif ve güvenli bir Windows program kaldırıcı ve artık temizleme m
   - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall` (64-bit Sistem Programları)
   - `HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall` (32-bit Sistem Programları)
   - `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall` (Kullanıcı Düzeyi Programlar)
+  - Mevcut kullanıcı için kaldırılabilir Microsoft Store/MSIX paketleri
 - **Güvenli Çift Süreç (Main & Renderer) Mimarisi**:
   - `contextIsolation: true` ve `nodeIntegration: false` ile tam yalıtım.
   - Renderer sürecinin sisteme doğrudan erişmesi engellenmiştir; tüm işlemler güvenli `preload.cjs` ve doğrulanmış `window.api` IPC kanalları üzerinden yürütülür.
@@ -73,7 +92,7 @@ npm run dist
 ```
 Üretilen kurulum dosyası:
 ```
-release/Sift Uninstaller-Setup-1.0.0.exe
+release/Sift Uninstaller-Setup-0.5.1.5.exe
 ```
 
 ### 2. Paketlenmiş Taşınabilir Klasör (Unpacked Dir) Üretme
@@ -112,4 +131,4 @@ release/win-unpacked/Sift Uninstaller.exe
 ## 🛡️ Güvenlik ve Uyumluluk Notları
 
 1. **Rastgele Komut Çalıştırma Engeli**: Renderer sürecinden gelen rastgele shell komutları kabul edilmez. Yalnızca Registry taramasında önbelleğe alınmış ve doğrulanmış `appId` değerlerinin `UninstallString` komutları çalıştırılır.
-2. **Yönetici Yetkisi (Run as Administrator)**: Bazı sistem düzeyindeki (HKLM) uygulamaları kaldırmak veya Sistem Geri Yükleme Noktası oluşturmak için uygulamanın Yönetici olarak başlatılması tavsiye edilir. Uygulama manifestinde `requestedExecutionLevel: highestAvailable` olarak ayarlanmıştır.
+2. **Yönetici Yetkisi (Run as Administrator)**: Sistem düzeyindeki uygulamaları kaldırmak ve korumalı kalıntıları temizlemek için uygulama yönetici yetkisiyle açılır. Uygulama manifestinde `requestedExecutionLevel: requireAdministrator` kullanılır.

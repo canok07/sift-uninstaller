@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { exec, execFile } from 'node:child_process';
@@ -18,6 +18,44 @@ import type {
 } from '../src/types';
 
 const execFileAsync = promisify(execFile);
+
+type LogLevel = 'INFO' | 'WARN' | 'ERROR';
+
+function getLogFilePath(): string {
+  const logDirectory = path.join(app.getPath('userData'), 'logs');
+  fs.mkdirSync(logDirectory, { recursive: true });
+  return path.join(logDirectory, 'sift-uninstaller.log');
+}
+
+function writeLog(level: LogLevel, event: string, details?: unknown): void {
+  try {
+    const logFile = getLogFilePath();
+    if (fs.existsSync(logFile) && fs.statSync(logFile).size > 5 * 1024 * 1024) {
+      const oldLogFile = `${logFile}.old`;
+      if (fs.existsSync(oldLogFile)) fs.rmSync(oldLogFile, { force: true });
+      fs.renameSync(logFile, oldLogFile);
+    }
+
+    const detailText = details === undefined
+      ? ''
+      : ` | ${typeof details === 'string' ? details : JSON.stringify(details)}`;
+    fs.appendFileSync(
+      logFile,
+      `[${new Date().toISOString()}] [${level}] ${event}${detailText}\r\n`,
+      'utf8'
+    );
+  } catch (error) {
+    console.error('Log dosyasına yazılamadı:', error);
+  }
+}
+
+process.on('uncaughtException', (error) => {
+  writeLog('ERROR', 'Yakalanmamış ana süreç hatası', error.stack || error.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  writeLog('ERROR', 'İşlenmemiş Promise hatası', reason instanceof Error ? reason.stack || reason.message : String(reason));
+});
 
 /**
  * PowerShell betiğini cmd.exe tırnaklama kurallarına sokmadan çalıştırır.
@@ -260,7 +298,8 @@ ipcMain.handle('programs:get-installed', async (): Promise<InstalledProgramsResu
   }
 
   try {
-    // PowerShell ile HKLM (64-bit), HKLM (Wow6432Node 32-bit) ve HKCU uninstall anahtarlarını güvenle sorguluyoruz
+    // Registry programlarını, Windows sistem bileşenlerini ve mevcut kullanıcının
+    // kaldırılabilir MSIX/AppX paketlerini tek doğrulanmış listede topluyoruz.
     const psScript = `
       [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
       $hives = @(
@@ -276,7 +315,9 @@ ipcMain.handle('programs:get-installed', async (): Promise<InstalledProgramsResu
             $dn = $_.DisplayName
             $sc = $_.SystemComponent
             $pk = $_.ParentKeyName
-            if ($dn -and ($dn.Trim().Length -gt 0) -and ($sc -ne 1) -and (-not $pk)) {
+            if ($dn -and ($dn.Trim().Length -gt 0)) {
+              $releaseType = [string]$_.ReleaseType
+              $isSystem = ($sc -eq 1) -or (-not [string]::IsNullOrWhiteSpace([string]$pk)) -or ($releaseType -match 'Update|Hotfix|Security')
               $apps += [PSCustomObject]@{
                 displayName = $dn.Trim()
                 displayVersion = [string]$_.DisplayVersion
@@ -289,11 +330,34 @@ ipcMain.handle('programs:get-installed', async (): Promise<InstalledProgramsResu
                 installLocation = [string]$_.InstallLocation
                 registryKey = ($_.PSPath -replace '^Microsoft\\.PowerShell\\.Core\\\\Registry::','').Trim()
                 hive = $h.Hive
+                category = if ($isSystem) { 'system' } else { 'desktop' }
+                isSystemComponent = [bool]$isSystem
+                packageFullName = ''
               }
             }
           }
         }
       }
+      Get-AppxPackage -ErrorAction SilentlyContinue |
+        Where-Object { (-not $_.IsFramework) -and (-not $_.NonRemovable) } |
+        ForEach-Object {
+          $apps += [PSCustomObject]@{
+            displayName = [string]$_.Name
+            displayVersion = [string]$_.Version
+            publisher = if ($_.PublisherId) { [string]$_.PublisherId } else { [string]$_.Publisher }
+            uninstallString = ''
+            quietUninstallString = ''
+            estimatedSize = 0
+            displayIcon = ''
+            installDate = ''
+            installLocation = [string]$_.InstallLocation
+            registryKey = 'APPX\\' + [string]$_.PackageFullName
+            hive = 'APPX'
+            category = 'store'
+            isSystemComponent = $false
+            packageFullName = [string]$_.PackageFullName
+          }
+        }
       $apps | ConvertTo-Json -Compress -Depth 4
     `;
 
@@ -309,7 +373,7 @@ ipcMain.handle('programs:get-installed', async (): Promise<InstalledProgramsResu
     cachedProgramsMap.clear();
 
     const programs: InstalledProgram[] = arrayList.map((item, idx) => {
-      const id = `win-app-${idx}-${Buffer.from(item.displayName).toString('hex').slice(0, 12)}`;
+      const id = `win-app-${idx}-${Buffer.from(`${item.category || 'desktop'}-${item.displayName}`).toString('hex').slice(0, 16)}`;
       
       const sizeBytes = (item.estimatedSize || 0) * 1024;
       const sizeFormatted = sizeBytes > 0
@@ -331,7 +395,10 @@ ipcMain.handle('programs:get-installed', async (): Promise<InstalledProgramsResu
         registryHive: (item.hive as RegistryHive) || 'HKLM',
         displayIcon: item.displayIcon || undefined,
         installDate: item.installDate || undefined,
-        installLocation: item.installLocation || undefined
+        installLocation: item.installLocation || undefined,
+        isSystemComponent: Boolean(item.isSystemComponent),
+        category: item.category === 'store' || item.category === 'system' ? item.category : 'desktop',
+        packageFullName: item.packageFullName || undefined
       };
 
       // Doğrulama için önbelleğe al
@@ -339,9 +406,17 @@ ipcMain.handle('programs:get-installed', async (): Promise<InstalledProgramsResu
       return program;
     });
 
+    writeLog('INFO', 'Program listesi yüklendi', {
+      total: programs.length,
+      desktop: programs.filter((program) => program.category === 'desktop').length,
+      store: programs.filter((program) => program.category === 'store').length,
+      system: programs.filter((program) => program.category === 'system').length
+    });
+
     return { success: true, programs };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
+    writeLog('ERROR', 'Kayıt defteri taraması başarısız', message);
     return {
       success: false,
       programs: [],
@@ -361,6 +436,30 @@ ipcMain.handle('programs:uninstall', async (_event, args: { appId: string; optio
       success: false,
       error: 'Güvenlik ihlali: Kaldırılmak istenen uygulama doğrulanmış Registry listesinde bulunamadı.'
     };
+  }
+
+  if (program.category === 'store') {
+    if (!program.packageFullName) {
+      writeLog('ERROR', 'Store uygulaması kaldırılamadı', { appId, error: 'Paket kimliği eksik' });
+      return { success: false, error: 'Microsoft Store paket kimliği bulunamadı.' };
+    }
+
+    writeLog('INFO', 'Store uygulaması kaldırma işlemi başlatıldı', {
+      app: program.displayName,
+      packageFullName: program.packageFullName
+    });
+    try {
+      await runPowerShell(
+        `Remove-AppxPackage -Package ${toPowerShellLiteral(program.packageFullName)} -ErrorAction Stop`,
+        8 * 1024 * 1024
+      );
+      writeLog('INFO', 'Store uygulaması kaldırıldı', { app: program.displayName });
+      return { success: true, exitCode: 0, message: 'Microsoft Store uygulaması başarıyla kaldırıldı.' };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      writeLog('ERROR', 'Store uygulaması kaldırılamadı', { app: program.displayName, error: message });
+      return { success: false, exitCode: -1, error: `Store uygulaması kaldırılamadı: ${message}` };
+    }
   }
 
   let commandToRun = (program.uninstallString || program.quietUninstallString || '').trim();
@@ -395,6 +494,11 @@ ipcMain.handle('programs:uninstall', async (_event, args: { appId: string; optio
   }
 
   return new Promise((resolve) => {
+    writeLog('INFO', 'Program kaldırma işlemi başlatıldı', {
+      app: program.displayName,
+      category: program.category || 'desktop',
+      silent: Boolean(options?.silent)
+    });
     // Windows üzerinde doğrudan çalıştırma
     exec(commandToRun, { windowsHide: false }, (error, stdout, stderr) => {
       if (error) {
@@ -413,6 +517,12 @@ ipcMain.handle('programs:uninstall', async (_event, args: { appId: string; optio
           exitCode: error.code || -1,
           error: `Kaldırıcı işlem hatayla sonlandı (Çıkış kodu: ${error.code ?? 'Bilinmiyor'}). ${error.message}`
         });
+        writeLog('ERROR', 'Program kaldırılamadı', {
+          app: program.displayName,
+          exitCode: error.code ?? -1,
+          error: error.message,
+          stderr: stderr?.trim()
+        });
         return;
       }
 
@@ -420,6 +530,11 @@ ipcMain.handle('programs:uninstall', async (_event, args: { appId: string; optio
         success: true,
         exitCode: 0,
         message: 'Program başarıyla sistemden kaldırıldı.'
+      });
+      writeLog('INFO', 'Program kaldırıldı', {
+        app: program.displayName,
+        stdout: stdout?.trim(),
+        stderr: stderr?.trim()
       });
     });
   });
@@ -442,6 +557,11 @@ ipcMain.handle('leftovers:scan', async (_event, args: { appId: string; options?:
 
   const appName = program.displayName.trim();
   const publisher = program.publisher?.trim() || '';
+  writeLog('INFO', 'Kalıntı taraması başlatıldı', {
+    app: appName,
+    scanAppData,
+    scanRegistry
+  });
 
   // Aday isim varyasyonları
   const cleanName = appName.replace(/\s*\(.*?\)\s*/g, '').replace(/version\s*[\d.]+/gi, '').trim();
@@ -541,6 +661,12 @@ ipcMain.handle('leftovers:scan', async (_event, args: { appId: string; options?:
     cachedLeftoversMap.set(candidate.id, candidate);
   }
 
+  writeLog('INFO', 'Kalıntı taraması tamamlandı', {
+    app: appName,
+    foundCount: foundCandidates.length,
+    targets: foundCandidates.map((candidate) => candidate.path)
+  });
+
   return {
     success: true,
     items: foundCandidates,
@@ -563,7 +689,15 @@ ipcMain.handle('leftovers:delete', async (_event, args: { items: Array<Pick<Left
       success: false,
       error: 'Bu hedef geçerli tarama sonucunda bulunmadı.'
     }));
+  writeLog('INFO', 'Kalıntı temizliği başlatıldı', {
+    requestedCount: requestedItems.length,
+    verifiedCount: items.length
+  });
+  for (const result of unknownResults) {
+    writeLog('ERROR', 'Doğrulanmamış temizlik hedefi engellendi', result);
+  }
   if (requestedItems.length === 0) {
+    writeLog('WARN', 'Kalıntı temizliği hedef seçilmeden çağrıldı');
     return {
       success: true,
       deletedCount: 0,
@@ -587,6 +721,10 @@ ipcMain.handle('leftovers:delete', async (_event, args: { items: Array<Pick<Left
           success: false,
           error: `Güvenlik Engeli: ${safety.reason}`
         });
+        writeLog('ERROR', 'Dosya sistemi hedefi güvenlik kontrolünde engellendi', {
+          path: item.path,
+          reason: safety.reason
+        });
         continue;
       }
 
@@ -596,10 +734,12 @@ ipcMain.handle('leftovers:delete', async (_event, args: { items: Array<Pick<Left
         }
         deletedCount++;
         results.push({ id: item.id, path: item.path, success: true });
+        writeLog('INFO', 'Kalıntı silindi', { type: item.type, path: item.path });
       } catch (err: unknown) {
         failedCount++;
         const msg = err instanceof Error ? err.message : String(err);
         results.push({ id: item.id, path: item.path, success: false, error: msg });
+        writeLog('ERROR', 'Dosya sistemi kalıntısı silinemedi', { path: item.path, error: msg });
       }
     } else if (item.type === 'registry_key') {
       const safety = isRegistryKeySafeToDelete(item.path);
@@ -611,6 +751,10 @@ ipcMain.handle('leftovers:delete', async (_event, args: { items: Array<Pick<Left
           success: false,
           error: `Güvenlik Engeli: ${safety.reason}`
         });
+        writeLog('ERROR', 'Registry hedefi güvenlik kontrolünde engellendi', {
+          path: item.path,
+          reason: safety.reason
+        });
         continue;
       }
 
@@ -619,13 +763,21 @@ ipcMain.handle('leftovers:delete', async (_event, args: { items: Array<Pick<Left
         await execFileAsync('reg.exe', ['delete', item.path, '/f'], { windowsHide: true });
         deletedCount++;
         results.push({ id: item.id, path: item.path, success: true });
+        writeLog('INFO', 'Registry kalıntısı silindi', { path: item.path });
       } catch (err: unknown) {
         failedCount++;
         const msg = err instanceof Error ? err.message : String(err);
         results.push({ id: item.id, path: item.path, success: false, error: msg });
+        writeLog('ERROR', 'Registry kalıntısı silinemedi', { path: item.path, error: msg });
       }
     }
   }
+
+  writeLog(failedCount === 0 ? 'INFO' : 'ERROR', 'Kalıntı temizliği tamamlandı', {
+    requestedCount: requestedItems.length,
+    deletedCount,
+    failedCount
+  });
 
   return {
     success: failedCount === 0,
@@ -668,6 +820,7 @@ ipcMain.handle('system:create-restore-point', async (_event, args?: { descriptio
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
+    writeLog('ERROR', 'Sistem geri yükleme noktası oluşturulamadı', message);
     return {
       success: false,
       supported: false,
@@ -676,8 +829,28 @@ ipcMain.handle('system:create-restore-point', async (_event, args?: { descriptio
   }
 });
 
+ipcMain.handle('logs:open-folder', async (): Promise<{ success: boolean; path?: string; error?: string }> => {
+  try {
+    const logFile = getLogFilePath();
+    if (!fs.existsSync(logFile)) {
+      writeLog('INFO', 'Log dosyası oluşturuldu');
+    }
+    shell.showItemInFolder(logFile);
+    return { success: true, path: logFile };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    writeLog('ERROR', 'Log klasörü açılamadı', message);
+    return { success: false, error: message };
+  }
+});
+
 // Electron Yaşam Döngüsü
 app.whenReady().then(async () => {
+  writeLog('INFO', 'Sift Uninstaller başlatıldı', {
+    version: app.getVersion(),
+    platform: process.platform,
+    packaged: app.isPackaged
+  });
   // Geliştirme sunucusu dışında uygulama yalnızca yükseltilmiş yönetici
   // belirteciyle çalışır. Standart açılış kendisini UAC ile yeniden başlatır.
   const requiresElevation = process.platform === 'win32' && process.env.SIFT_DEV_SERVER !== '1';

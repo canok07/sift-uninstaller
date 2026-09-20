@@ -2,6 +2,7 @@ export type RegistryHive =
   | 'HKLM' 
   | 'HKCU' 
   | 'WOW6432Node' 
+  | 'APPX'
   | 'HKLM (64-bit)' 
   | 'HKLM (32-bit Wow6432Node)' 
   | 'HKCU (Mevcut Kullanıcı)';
@@ -22,6 +23,8 @@ export interface InstalledProgram {
   installDate?: string;
   installLocation?: string;
   isSystemComponent?: boolean;
+  category?: 'desktop' | 'store' | 'system';
+  packageFullName?: string;
 }
 
 export interface SystemInfo {
@@ -109,6 +112,7 @@ export interface ElectronAPI {
   scanLeftovers: (appId: string, options?: LeftoverScanOptions) => Promise<LeftoverScanResult>;
   deleteLeftovers: (items: LeftoverItem[]) => Promise<LeftoverDeleteResult>;
   createRestorePoint: (description?: string) => Promise<RestorePointResult>;
+  openLogFolder: () => Promise<{ success: boolean; path?: string; error?: string }>;
 }
 
 declare global {

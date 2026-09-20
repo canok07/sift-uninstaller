@@ -19,7 +19,8 @@ import {
   Moon,
   Loader2,
   ShieldAlert,
-  Info
+  Info,
+  FolderOpen
 } from 'lucide-react';
 import { LeftoverCleanerModal } from './LeftoverCleanerModal';
 import type { 
@@ -37,11 +38,48 @@ export interface FluentAppItem {
   size: string;
   sizeBytes: number;
   publisher: string;
+  installDate?: string;
   uninstallString: string;
   registryKey: string;
   hive: RegistryHive;
   isReal?: boolean;
+  category: 'desktop' | 'store' | 'system';
+  isSystemComponent?: boolean;
 }
+
+const getInstallDateTimestamp = (value?: string): number | null => {
+  if (!value) return null;
+
+  const compactDate = value.replace(/\D/g, '').slice(0, 8);
+  if (/^\d{8}$/.test(compactDate)) {
+    const year = Number(compactDate.slice(0, 4));
+    const month = Number(compactDate.slice(4, 6));
+    const day = Number(compactDate.slice(6, 8));
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+    const date = new Date(year, month - 1, day);
+    const isExactDate =
+      date.getFullYear() === year &&
+      date.getMonth() === month - 1 &&
+      date.getDate() === day;
+    if (!isExactDate || date.getTime() > Date.now()) return null;
+    return date.getTime();
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) || parsed > Date.now() ? null : parsed;
+};
+
+const formatInstallDate = (value?: string): string => {
+  const timestamp = getInstallDateTimestamp(value);
+  return timestamp === null
+    ? 'Belirtilmemiş'
+    : new Intl.DateTimeFormat('tr-TR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).format(timestamp);
+};
 
 const DEMO_REGISTRY_APPS: FluentAppItem[] = [
   { 
@@ -55,7 +93,8 @@ const DEMO_REGISTRY_APPS: FluentAppItem[] = [
     uninstallString: '"C:\\Program Files\\Google\\Chrome\\Application\\128.0.6613.120\\Installer\\setup.exe" --uninstall',
     registryKey: 'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Google Chrome',
     hive: 'HKCU',
-    isReal: false
+    isReal: false,
+    category: 'desktop'
   },
   { 
     id: 'demo-2', 
@@ -68,7 +107,8 @@ const DEMO_REGISTRY_APPS: FluentAppItem[] = [
     uninstallString: '"C:\\Users\\User\\AppData\\Local\\Programs\\Microsoft VS Code\\unins000.exe"',
     registryKey: 'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{F8A4A118-0E78-4384-B6E3-E5F64E3D857A}_is1',
     hive: 'HKCU',
-    isReal: false
+    isReal: false,
+    category: 'desktop'
   },
   { 
     id: 'demo-3', 
@@ -81,7 +121,8 @@ const DEMO_REGISTRY_APPS: FluentAppItem[] = [
     uninstallString: '"C:\\Users\\User\\AppData\\Roaming\\Spotify\\Spotify.exe" /uninstall',
     registryKey: 'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Spotify',
     hive: 'HKCU',
-    isReal: false
+    isReal: false,
+    category: 'desktop'
   },
   { 
     id: 'demo-4', 
@@ -94,7 +135,8 @@ const DEMO_REGISTRY_APPS: FluentAppItem[] = [
     uninstallString: '"C:\\Program Files\\Git\\unins000.exe"',
     registryKey: 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Git_is1',
     hive: 'HKLM',
-    isReal: false
+    isReal: false,
+    category: 'desktop'
   },
   { 
     id: 'demo-5', 
@@ -107,7 +149,8 @@ const DEMO_REGISTRY_APPS: FluentAppItem[] = [
     uninstallString: '"C:\\Program Files\\7-Zip\\Uninstall.exe"',
     registryKey: 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\7-Zip',
     hive: 'HKLM',
-    isReal: false
+    isReal: false,
+    category: 'desktop'
   },
   { 
     id: 'demo-6', 
@@ -120,7 +163,8 @@ const DEMO_REGISTRY_APPS: FluentAppItem[] = [
     uninstallString: '"C:\\Users\\User\\AppData\\Local\\Discord\\Update.exe" --uninstall -s',
     registryKey: 'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Discord',
     hive: 'HKCU',
-    isReal: false
+    isReal: false,
+    category: 'desktop'
   },
   { 
     id: 'demo-7', 
@@ -133,7 +177,8 @@ const DEMO_REGISTRY_APPS: FluentAppItem[] = [
     uninstallString: '"C:\\Program Files (x86)\\Steam\\uninstall.exe"',
     registryKey: 'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Steam',
     hive: 'WOW6432Node',
-    isReal: false
+    isReal: false,
+    category: 'desktop'
   },
   { 
     id: 'demo-8', 
@@ -146,7 +191,8 @@ const DEMO_REGISTRY_APPS: FluentAppItem[] = [
     uninstallString: 'MsiExec.exe /I{455F5C8B-8DEB-41DE-8533-547B2AA9DCBD}',
     registryKey: 'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{455F5C8B-8DEB-41DE-8533-547B2AA9DCBD}',
     hive: 'HKLM',
-    isReal: false
+    isReal: false,
+    category: 'desktop'
   }
 ];
 
@@ -183,6 +229,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAppId, setSelectedAppId] = useState<string | null>(() => isElectronEnvironment ? null : 'demo-1');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'desktop' | 'store' | 'system'>('all');
 
   // Filtreleme (Dropdown menüsü)
   const [filterType, setFilterType] = useState<'ALL' | 'HKLM' | 'HKCU' | 'LARGE'>('ALL');
@@ -235,7 +282,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   const [settingSilentUninstall, setSettingSilentUninstall] = useState(false);
 
   // Sıralama (Sort)
-  const [sortField, setSortField] = useState<'name' | 'size' | 'publisher'>('name');
+  const [sortField, setSortField] = useState<'name' | 'size' | 'publisher' | 'installDate'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
   // Temizlik ve unmount koruması
@@ -328,10 +375,13 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
             size: p.sizeFormatted || (sizeInBytes > 0 ? `${Math.round(sizeInBytes / (1024 * 1024))} MB` : 'Belirtilmemiş'),
             sizeBytes: sizeInBytes,
             publisher: p.publisher || 'Bilinmeyen Yayıncı',
+            installDate: p.installDate,
             uninstallString: p.uninstallString || '',
             registryKey: p.registryKey || '',
             hive: p.registryHive || 'HKLM',
-            isReal: true
+            isReal: true,
+            category: p.category || 'desktop',
+            isSystemComponent: Boolean(p.isSystemComponent)
           };
         });
 
@@ -371,18 +421,20 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
     }
   };
 
-  const handleSort = (field: 'name' | 'size' | 'publisher') => {
+  const handleSort = (field: 'name' | 'size' | 'publisher' | 'installDate') => {
     if (sortField === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
     } else {
       setSortField(field);
-      setSortOrder('asc');
+      setSortOrder(field === 'installDate' ? 'desc' : 'asc');
     }
   };
 
   // Arama ve Filtreleme
   const filteredApps = apps
     .filter((app) => {
+      if (categoryFilter !== 'all' && app.category !== categoryFilter) return false;
+
       const matchQuery = 
         app.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         app.publisher.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -403,9 +455,23 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         comparison = a.sizeBytes - b.sizeBytes;
       } else if (sortField === 'publisher') {
         comparison = a.publisher.localeCompare(b.publisher, 'tr', { sensitivity: 'base' });
+      } else if (sortField === 'installDate') {
+        const aDate = getInstallDateTimestamp(a.installDate);
+        const bDate = getInstallDateTimestamp(b.installDate);
+        if (aDate === null && bDate === null) return 0;
+        if (aDate === null) return 1;
+        if (bDate === null) return -1;
+        comparison = aDate - bDate;
       }
       return sortOrder === 'asc' ? comparison : -comparison;
     });
+
+  const categoryCounts = {
+    all: apps.length,
+    desktop: apps.filter((app) => app.category === 'desktop').length,
+    store: apps.filter((app) => app.category === 'store').length,
+    system: apps.filter((app) => app.category === 'system').length
+  };
 
   const selectedApp = apps.find((a) => a.id === selectedAppId);
 
@@ -785,6 +851,32 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           </div>
         </div>
 
+        <div className="bg-white dark:bg-[#16181C] p-1.5 rounded-xl border border-slate-200/80 dark:border-zinc-800 shadow-sm flex items-center gap-1 overflow-x-auto">
+          {([
+            ['all', 'Tümü'],
+            ['desktop', 'Masaüstü Programları'],
+            ['store', 'Store Uygulamaları'],
+            ['system', 'Windows Bileşenleri']
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => {
+                setCategoryFilter(value);
+                setFilterType('ALL');
+                setSelectedAppId(null);
+              }}
+              className={`whitespace-nowrap px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                categoryFilter === value
+                  ? 'bg-sky-100 dark:bg-sky-950/70 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800'
+                  : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800'
+              }`}
+            >
+              {label} <span className="ml-1 opacity-70">({categoryCounts[value]})</span>
+            </button>
+          ))}
+        </div>
+
         {/* ========================================================================= */}
         {/* 2. ARAMA VE FİLTRE ÇUBUĞU (SEARCH BAR)                                     */}
         {/* ========================================================================= */}
@@ -872,7 +964,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         </div>
 
         {/* ========================================================================= */}
-        {/* 3. ANA LİSTE (DATA GRID / TABLE - 4 SÜTUN)                                */}
+        {/* 3. ANA LİSTE (DATA GRID / TABLE - 5 SÜTUN)                                */}
         {/* ========================================================================= */}
         <div className="flex-1 bg-white dark:bg-[#16181C] rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-sm overflow-hidden flex flex-col">
           <div className="flex-1 overflow-y-auto">
@@ -918,13 +1010,27 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                       )}
                     </div>
                   </th>
+                  <th
+                    className="py-3 px-5 whitespace-nowrap cursor-pointer hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+                    onClick={() => handleSort('installDate')}
+                    title="Kurulum tarihine göre sırala"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Kurulum Tarihi</span>
+                      {sortField === 'installDate' ? (
+                        sortOrder === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" /> : <ArrowDown className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-300 dark:text-zinc-600 opacity-60" />
+                      )}
+                    </div>
+                  </th>
                   <th className="py-3 px-5 text-right">Eylemler</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/80 text-xs sm:text-sm">
                 {isLoadingRegistry ? (
                   <tr>
-                    <td colSpan={4} className="py-16 text-center text-slate-400 dark:text-zinc-500">
+                    <td colSpan={5} className="py-16 text-center text-slate-400 dark:text-zinc-500">
                       <div className="flex flex-col items-center justify-center space-y-3">
                         <Loader2 className="w-7 h-7 animate-spin text-sky-500" />
                         <p className="font-medium text-slate-700 dark:text-zinc-300">Windows Kayıt Defteri taranıyor...</p>
@@ -934,7 +1040,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                   </tr>
                 ) : registryReadError ? (
                   <tr>
-                    <td colSpan={4} className="py-14 text-center">
+                    <td colSpan={5} className="py-14 text-center">
                       <div className="flex flex-col items-center justify-center space-y-2 text-rose-600 dark:text-rose-400">
                         <AlertTriangle className="w-8 h-8" />
                         <p className="font-semibold text-sm">Kayıt Defteri Okunamadı</p>
@@ -950,7 +1056,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                   </tr>
                 ) : filteredApps.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-12 text-center text-slate-400 dark:text-zinc-500">
+                    <td colSpan={5} className="py-12 text-center text-slate-400 dark:text-zinc-500">
                       <div className="flex flex-col items-center justify-center space-y-2">
                         <Search className="w-6 h-6 text-slate-300 dark:text-zinc-600" />
                         <p>Kurulu program bulunamadı veya arama kriterine uymuyor.</p>
@@ -974,6 +1080,8 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                       <tr
                         key={app.id}
                         onClick={() => setSelectedAppId(app.id)}
+                        onDoubleClick={() => promptUninstall(app)}
+                        title="Seçmek için tıklayın, kaldırma onayı için çift tıklayın"
                         className={`group transition-colors cursor-pointer select-none ${
                           isSelected
                             ? 'bg-sky-50/80 dark:bg-zinc-800/80 text-sky-950 dark:text-zinc-100 font-medium'
@@ -996,6 +1104,16 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                                 }`}>
                                   {app.hive}
                                 </span>
+                                {app.category === 'store' && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-normal bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                    STORE
+                                  </span>
+                                )}
+                                {app.category === 'system' && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-normal bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                    SİSTEM
+                                  </span>
+                                )}
                               </div>
                               <div className="text-[11px] text-slate-400 dark:text-zinc-500 font-mono hidden md:block">
                                 {app.registryKey.substring(0, 48)}...
@@ -1014,7 +1132,12 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                           {app.publisher}
                         </td>
 
-                        {/* 4. Sütun: Eylemler */}
+                        {/* 4. Sütun: Kurulum Tarihi */}
+                        <td className="py-3.5 px-5 whitespace-nowrap font-mono text-slate-500 dark:text-zinc-400">
+                          {formatInstallDate(app.installDate)}
+                        </td>
+
+                        {/* 5. Sütun: Eylemler */}
                         <td className="py-3.5 px-5 text-right">
                           {isUninstalling ? (
                             <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-xs">
@@ -1140,9 +1263,21 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
               <div className="font-semibold text-slate-800 dark:text-zinc-100">{confirmUninstallApp.name}</div>
               <div className="text-slate-500 dark:text-zinc-400">Yayıncı: {confirmUninstallApp.publisher} • Boyut: {confirmUninstallApp.size}</div>
               <div className="font-mono text-[11px] text-slate-600 dark:text-zinc-300 bg-white dark:bg-zinc-900 p-2 rounded border border-slate-200 dark:border-zinc-800 overflow-x-auto break-all">
-                {confirmUninstallApp.uninstallString || 'Doğrudan kaldırma komutu'}
+                {confirmUninstallApp.category === 'store'
+                  ? 'Windows MSIX/AppX paket kaldırıcısı'
+                  : confirmUninstallApp.uninstallString || 'Kaldırma komutu bulunamadı'}
               </div>
             </div>
+
+            {confirmUninstallApp.category === 'system' && (
+              <div className="flex items-start gap-2 p-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 text-xs">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold">Windows sistem bileşeni</div>
+                  <div>Bu bileşenin kaldırılması Windows veya başka programların çalışmasını bozabilir. Yalnızca ne yaptığınızdan eminseniz devam edin.</div>
+                </div>
+              </div>
+            )}
 
             <div className="text-xs text-slate-500 dark:text-zinc-400 space-y-1">
               <p>• Kaldırıcı işlem sonlanana kadar uygulama penceresi durumu izleyecek.</p>
@@ -1266,6 +1401,32 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                   className="w-4 h-4 text-sky-600 rounded"
                 />
               </label>
+
+              <div className="flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-200/80 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-900/50">
+                <div>
+                  <div className="font-semibold text-slate-800 dark:text-zinc-100">İşlem Günlükleri</div>
+                  <div className="text-slate-500 dark:text-zinc-400">Temizlik sonuçlarını ve hata ayrıntılarını kalıcı log dosyasında görüntüle</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!window.api?.openLogFolder) {
+                      setNotification({ text: 'Log klasörü yalnızca masaüstü uygulamasında açılabilir.', type: 'error' });
+                      return;
+                    }
+                    const result = await window.api.openLogFolder();
+                    setNotification({
+                      text: result.success ? 'Log dosyasının bulunduğu klasör açıldı.' : `Log klasörü açılamadı: ${result.error || 'Bilinmeyen hata'}`,
+                      type: result.success ? 'success' : 'error'
+                    });
+                    safeSetTimeout(() => setNotification(null), 3500);
+                  }}
+                  className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-700 dark:text-zinc-200 hover:text-sky-600 dark:hover:text-sky-400 hover:border-sky-300 dark:hover:border-sky-700 transition-colors cursor-pointer"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  <span>Logları Aç</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-zinc-800">

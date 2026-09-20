@@ -37,6 +37,10 @@ const api: ElectronAPI = {
 
   createRestorePoint: (description?: string): Promise<RestorePointResult> => {
     return ipcRenderer.invoke('system:create-restore-point', { description });
+  },
+
+  openLogFolder: (): Promise<{ success: boolean; path?: string; error?: string }> => {
+    return ipcRenderer.invoke('logs:open-folder');
   }
 };
 
