@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Windows Registry Program Listesi</title>
+    <meta name="description" content="Windows Registry tabanlı program kaldırıcı, güvenli Electron IPC mimarisi ve artık temizleyici." />
+    <meta property="og:title" content="Windows Registry Program Listesi" />
+    <meta property="og:description" content="Windows Registry tabanlı program kaldırıcı, güvenli Electron IPC mimarisi ve artık temizleyici." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      (function() {
+        var theme = localStorage.getItem('sift_theme');
+        if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        } else if (theme === 'light') {
+          document.documentElement.classList.remove('dark');
+        } else {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-[#f1f5f9] dark:bg-black text-slate-900 dark:text-white m-0 p-0 overflow-hidden w-full h-full transition-colors duration-200">
+    <div id="root" class="w-full h-full"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

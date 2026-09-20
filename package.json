@@ -1,0 +1,76 @@
+{
+  "name": "sift-uninstaller",
+  "private": true,
+  "version": "1.1.0",
+  "author": "Sift Uninstaller",
+  "description": "Windows Registry tabanlı modern program kaldırıcı ve kalıntı temizleyici masaüstü uygulaması",
+  "main": "dist-electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3000 --host=127.0.0.1 --strictPort",
+    "build": "vite build",
+    "build:electron": "esbuild electron/main.ts electron/preload.ts --outdir=dist-electron --platform=node --format=cjs --bundle --external:electron --out-extension:.js=.cjs",
+    "electron:dev": "npm run build:electron && concurrently --kill-others-on-fail -k \"npm:dev\" \"wait-on http-get://127.0.0.1:3000 && set SIFT_DEV_SERVER=1&& electron dist-electron/main.cjs\"",
+    "electron:devtools": "npm run build:electron && concurrently --kill-others-on-fail -k \"npm:dev\" \"wait-on http-get://127.0.0.1:3000 && set SIFT_DEV_SERVER=1&& set SIFT_OPEN_DEVTOOLS=1&& electron dist-electron/main.cjs\"",
+    "electron:build": "npm run build && npm run build:electron",
+    "dist": "npm run build && npm run build:electron && electron-builder --win nsis",
+    "dist:dir": "npm run build && npm run build:electron && electron-builder --win --dir",
+    "preview": "vite preview",
+    "clean": "node -e \"const fs=require('fs'); ['dist','dist-electron','release'].forEach(d => fs.existsSync(d) && fs.rmSync(d, {recursive:true, force:true}))\"",
+    "lint": "tsc --noEmit"
+  },
+  "build": {
+    "appId": "com.siftuninstaller.app",
+    "productName": "Sift Uninstaller",
+    "npmRebuild": false,
+    "copyright": "Copyright © 2026 Sift Uninstaller",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.14",
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.1.2",
+    "electron": "^44.4.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.0",
+    "lucide-react": "^0.546.0",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "tailwindcss": "^4.1.14",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3",
+    "wait-on": "^8.0.3"
+  },
+  "allowScripts": {
+    "electron": true,
+    "esbuild": true,
+    "electron-winstaller": false
+  }
+}

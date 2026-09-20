@@ -1,0 +1,6 @@
+{
+  "name": "Windows Registry Program Listesi",
+  "description": "Windows Registry tabanlı program kaldırıcı, güvenli Electron IPC mimarisi ve artık temizleyici.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
