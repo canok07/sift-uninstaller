@@ -3,6 +3,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { assertNoLinkedChildren, buildCleanupCandidates, checkCleanupPath, checkCleanupRegistry, isSafeName } from './cleanupSafety';
+import { randomUUID } from 'node:crypto';
+import { verifyUninstall } from './uninstallVerification';
+import { APP_VERSION } from '../src/version';
 import type { 
   InstalledProgram, 
   InstalledProgramsResult, 
@@ -61,12 +65,12 @@ process.on('unhandledRejection', (reason) => {
  * PowerShell betiğini cmd.exe tırnaklama kurallarına sokmadan çalıştırır.
  * -EncodedCommand UTF-16LE beklediği için betik bu biçimde kodlanır.
  */
-async function runPowerShell(script: string, maxBuffer = 32 * 1024 * 1024) {
+async function runPowerShell(script: string, maxBuffer = 32 * 1024 * 1024, timeout?: number) {
   const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
   return execFileAsync(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodedScript],
-    { windowsHide: true, maxBuffer, encoding: 'utf8' }
+    { windowsHide: true, maxBuffer, encoding: 'utf8', timeout }
   );
 }
 
@@ -160,115 +164,17 @@ async function relaunchAsAdministrator(): Promise<boolean> {
  * Yıkıcı silme işlemlerinde sistem kök dizinlerinin veya geniş klasörlerin
  * kazara silinmesini engelleyen katı güvenlik filtresi (Whitelisting / Blacklisting)
  */
-function isPathSafeToDelete(targetPath: string): { safe: boolean; reason?: string } {
-  if (!targetPath || typeof targetPath !== 'string') {
-    return { safe: false, reason: 'Geçersiz veya boş yol' };
-  }
-
-  const normalized = path.normalize(targetPath).trim();
-  const lower = normalized.toLowerCase();
-
-  // 1. Sürücü kökleri (Örn: C:\, D:\, /)
-  if (/^[a-zA-Z]:\\?$/.test(normalized) || normalized === '/' || normalized === '\\') {
-    return { safe: false, reason: 'Sürücü kök dizini silinemez' };
-  }
-
-  // 2. Kritik Windows ve Sistem Dizinleri
-  const blacklistedSubstrings = [
-    '\\windows',
-    '\\system32',
-    '\\syswow64',
-    '\\winsxs',
-    '\\boot',
-    '\\recovery',
-    '\\perflogs'
-  ];
-  for (const bl of blacklistedSubstrings) {
-    if (lower === `c:${bl}` || lower.startsWith(`c:${bl}\\`)) {
-      return { safe: false, reason: 'Windows sistem çekirdek dizinleri silinemez' };
-    }
-  }
-
-  // 3. Kullanıcı ve Program Dosyaları Kökleri
-  const systemRoots = [
-    'c:\\program files',
-    'c:\\program files (x86)',
-    'c:\\users',
-    'c:\\programdata'
-  ];
-  for (const root of systemRoots) {
-    if (lower === root || lower === `${root}\\`) {
-      return { safe: false, reason: 'Ana sistem klasörünün kendisi silinemez' };
-    }
-  }
-
-  // 4. Kullanıcı Profil Kökü (Örn: C:\Users\Username)
-  const userProfile = process.env.USERPROFILE?.toLowerCase();
-  if (userProfile && (lower === userProfile || lower === `${userProfile}\\`)) {
-    return { safe: false, reason: 'Kullanıcı profil ana dizini silinemez' };
-  }
-
-  // 5. AppData ve LocalAppData Ana Klasörlerinin Kendisi
-  const appData = process.env.APPDATA?.toLowerCase();
-  const localAppData = process.env.LOCALAPPDATA?.toLowerCase();
-  const programData = process.env.ALLUSERSPROFILE?.toLowerCase() || 'c:\\programdata';
-
-  if (appData && (lower === appData || lower === `${appData}\\`)) {
-    return { safe: false, reason: 'AppData ana klasörü silinemez' };
-  }
-  if (localAppData && (lower === localAppData || lower === `${localAppData}\\`)) {
-    return { safe: false, reason: 'LocalAppData ana klasörü silinemez' };
-  }
-  if (programData && (lower === programData || lower === `${programData}\\`)) {
-    return { safe: false, reason: 'ProgramData ana klasörü silinemez' };
-  }
-
-  // En az 2 seviye derinlikte olmalıdır (Örn: %AppData%\ProgramName)
-  const segments = normalized.split(/[\\/]/).filter(Boolean);
-  if (segments.length < 3) {
-    return { safe: false, reason: 'Yol derinliği güvenlik için yetersiz (en az 3 kademe gereklidir)' };
-  }
-
-  return { safe: true };
+function getCleanupRoots(): string[] {
+  return [process.env.APPDATA, process.env.LOCALAPPDATA, process.env.PROGRAMDATA || process.env.ALLUSERSPROFILE]
+    .filter((value): value is string => Boolean(value));
 }
 
-function isRegistryKeySafeToDelete(regKey: string): { safe: boolean; reason?: string } {
-  if (!regKey || typeof regKey !== 'string') {
-    return { safe: false, reason: 'Geçersiz registry anahtarı' };
-  }
-  const cleanKey = regKey.trim().toUpperCase();
+function isPathSafeToDelete(targetPath: string, scopeRoot?: string) {
+  return checkCleanupPath(targetPath, scopeRoot ? [scopeRoot] : getCleanupRoots(), process.env.WINDIR);
+}
 
-  // Root veya 1. seviye Software anahtarları asla silinemez
-  const forbiddenKeys = [
-    'HKLM',
-    'HKCU',
-    'HKCR',
-    'HKU',
-    'HKEY_LOCAL_MACHINE',
-    'HKEY_CURRENT_USER',
-    'HKEY_CLASSES_ROOT',
-    'HKEY_USERS',
-    'HKLM\\SOFTWARE',
-    'HKCU\\SOFTWARE',
-    'HKLM\\SOFTWARE\\MICROSOFT',
-    'HKCU\\SOFTWARE\\MICROSOFT',
-    'HKLM\\SOFTWARE\\WOW6432NODE',
-    'HKLM\\SOFTWARE\\WOW6432NODE\\MICROSOFT',
-    'HKLM\\SYSTEM',
-    'HKLM\\SAM',
-    'HKLM\\SECURITY'
-  ];
-
-  if (forbiddenKeys.includes(cleanKey)) {
-    return { safe: false, reason: 'Kayıt defteri kök veya sistem seviyesi anahtarlar silinemez' };
-  }
-
-  const parts = cleanKey.split('\\').filter(Boolean);
-  if (parts.length < 3) {
-    return { safe: false, reason: 'Registry anahtarı güvenlik sınırının üzerinde (çok genel)' };
-  }
-
-  return { safe: true };
+function isRegistryKeySafeToDelete(regKey: string) {
+  return checkCleanupRegistry(regKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -426,6 +332,21 @@ ipcMain.handle('programs:get-installed', async (): Promise<InstalledProgramsResu
 });
 
 // 3. Gerçek Kaldırma İşlemi (Güvenli, doğrulanmış ve asenkron çıkış takibi)
+async function isProgramStillInstalled(program: InstalledProgram): Promise<boolean> {
+  let script: string;
+  if (program.category === 'store') {
+    script = `$ErrorActionPreference = 'Stop'; $packages = @(Get-AppxPackage -Name ${toPowerShellLiteral(program.displayName)} -ErrorAction Stop); if ($packages.Count -gt 0) { 'INSTALLED' } else { 'REMOVED' }`;
+  } else {
+    if (!program.registryKey) throw new Error('Kaldırma doğrulaması için Registry anahtarı bulunamadı.');
+    const key = `Registry::${program.registryKey}`;
+    script = `$ErrorActionPreference = 'Stop'; if (Test-Path -LiteralPath ${toPowerShellLiteral(key)} -ErrorAction Stop) { 'INSTALLED' } else { 'REMOVED' }`;
+  }
+  const { stdout } = await runPowerShell(script, 1024 * 1024, 10000);
+  if (stdout.trim() === 'INSTALLED') return true;
+  if (stdout.trim() === 'REMOVED') return false;
+  throw new Error('Windows kaldırma doğrulaması beklenen sonucu döndürmedi.');
+}
+
 ipcMain.handle('programs:uninstall', async (_event, args: { appId: string; options?: UninstallOptions }): Promise<UninstallResult> => {
   const { appId, options } = args;
 
@@ -453,8 +374,9 @@ ipcMain.handle('programs:uninstall', async (_event, args: { appId: string; optio
         `Remove-AppxPackage -Package ${toPowerShellLiteral(program.packageFullName)} -ErrorAction Stop`,
         8 * 1024 * 1024
       );
-      writeLog('INFO', 'Store uygulaması kaldırıldı', { app: program.displayName });
-      return { success: true, exitCode: 0, message: 'Microsoft Store uygulaması başarıyla kaldırıldı.' };
+      const result = await verifyUninstall(() => isProgramStillInstalled(program));
+      writeLog(result.verified ? 'INFO' : 'ERROR', 'Store kaldırma doğrulaması', { app: program.displayName, ...result });
+      return result;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       writeLog('ERROR', 'Store uygulaması kaldırılamadı', { app: program.displayName, error: message });
@@ -500,18 +422,8 @@ ipcMain.handle('programs:uninstall', async (_event, args: { appId: string; optio
       silent: Boolean(options?.silent)
     });
     // Windows üzerinde doğrudan çalıştırma
-    exec(commandToRun, { windowsHide: false }, (error, stdout, stderr) => {
-      if (error) {
-        // Hata kodu 3010: Yeniden başlatma gerekiyor (Reboot Required) - MSI standardında başarılı kabul edilir
-        if (error.code === 3010) {
-          resolve({
-            success: true,
-            exitCode: 3010,
-            message: 'Kaldırma tamamlandı (Sistemin yeniden başlatılması gerekebilir).'
-          });
-          return;
-        }
-
+    exec(commandToRun, { windowsHide: false }, async (error, stdout, stderr) => {
+      if (error && error.code !== 3010) {
         resolve({
           success: false,
           exitCode: error.code || -1,
@@ -526,157 +438,127 @@ ipcMain.handle('programs:uninstall', async (_event, args: { appId: string; optio
         return;
       }
 
-      resolve({
-        success: true,
-        exitCode: 0,
-        message: 'Program başarıyla sistemden kaldırıldı.'
-      });
-      writeLog('INFO', 'Program kaldırıldı', {
+      const result = await verifyUninstall(() => isProgramStillInstalled(program), error?.code === 3010 ? 3010 : 0);
+      writeLog(result.verified ? 'INFO' : 'WARN', 'Program kaldırma doğrulaması', {
         app: program.displayName,
+        ...result,
         stdout: stdout?.trim(),
         stderr: stderr?.trim()
       });
+      resolve(result);
     });
   });
 });
 
-// 4. Güvenli Kalıntı Arama (Yalnızca doğrulanmış hedefler, varsayılan false seçim)
+// 4. Program-specific leftovers; errors remain distinct from a complete empty scan.
 ipcMain.handle('leftovers:scan', async (_event, args: { appId: string; options?: LeftoverScanOptions }): Promise<LeftoverScanResult> => {
-  const { appId, options } = args;
-  const program = cachedProgramsMap.get(appId);
+  const program = cachedProgramsMap.get(args.appId);
   if (!program) {
-    return {
-      success: false,
-      items: [],
-      error: 'Uygulama önbellekte bulunamadı.'
-    };
+    writeLog('ERROR', 'Kalıntı taraması başlatılamadı', { appId: args.appId });
+    return { success: false, items: [], error: 'Uygulama önbellekte bulunamadı.' };
   }
 
-  const scanAppData = options?.scanAppData !== false;
-  const scanRegistry = options?.scanRegistry !== false;
-
+  const scanAppData = args.options?.scanAppData !== false;
+  const scanRegistry = args.options?.scanRegistry !== false;
   const appName = program.displayName.trim();
   const publisher = program.publisher?.trim() || '';
-  writeLog('INFO', 'Kalıntı taraması başlatıldı', {
-    app: appName,
-    scanAppData,
-    scanRegistry
-  });
-
-  // Aday isim varyasyonları
   const cleanName = appName.replace(/\s*\(.*?\)\s*/g, '').replace(/version\s*[\d.]+/gi, '').trim();
-  const searchTerms = Array.from(new Set([cleanName, appName])).filter((t) => t.length >= 3);
-
-  const foundCandidates: LeftoverItem[] = [];
+  const terms = [...new Set([cleanName, appName])].filter(isSafeName)
+    .filter((term) => term.toLowerCase() !== publisher.toLowerCase());
+  const items: LeftoverItem[] = [];
+  const warnings: string[] = [];
   cachedLeftoversMap.clear();
-  let candidateIndex = 0;
+  const scanId = randomUUID();
+  const warn = (target: string, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    warnings.push(target + ': ' + message);
+    writeLog('ERROR', 'Kalıntı tarama hatası', { app: appName, target, error: message });
+  };
+  const add = (item: Omit<LeftoverItem, 'id' | 'selected'>) => {
+    if (items.some((candidate) => candidate.path.toLowerCase() === item.path.toLowerCase())) return;
+    items.push({ ...item, id: 'leftover-' + scanId + '-' + items.length, selected: false });
+  };
+  writeLog('INFO', 'Kalıntı taraması başlatıldı', { app: appName, scanAppData, scanRegistry });
 
-  // A. Dosya Sistemi Taraması (%AppData%, %LocalAppData%, C:\ProgramData)
-  if (scanAppData && process.platform === 'win32') {
-    const scopes: Array<{ envPath: string | undefined; scope: LeftoverItem['targetScope'] }> = [
-      { envPath: process.env.APPDATA, scope: '%AppData%' },
-      { envPath: process.env.LOCALAPPDATA, scope: '%LocalAppData%' },
-      { envPath: process.env.ALLUSERSPROFILE || 'C:\\ProgramData', scope: 'C:\\ProgramData' }
+  if (!scanAppData && !scanRegistry) warn('Tarama', 'En az bir tarama alanı seçilmelidir.');
+  if (!terms.length) warn('Program adı', 'Program için güvenli bir hedef adı oluşturulamadı.');
+  if (scanAppData) {
+    const scopes: Array<{ root: string | undefined; scope: LeftoverItem['targetScope'] }> = [
+      { root: process.env.APPDATA, scope: '%AppData%' },
+      { root: process.env.LOCALAPPDATA, scope: '%LocalAppData%' },
+      { root: process.env.PROGRAMDATA || process.env.ALLUSERSPROFILE, scope: 'C:\\ProgramData' }
     ];
-
-    for (const { envPath, scope } of scopes) {
-      if (!envPath || !fs.existsSync(envPath)) continue;
-
-      for (const term of searchTerms) {
-        const potentialDirs = [
-          path.join(envPath, term),
-          publisher ? path.join(envPath, publisher, term) : null,
-          publisher ? path.join(envPath, publisher) : null
-        ].filter(Boolean) as string[];
-
-        for (const dir of potentialDirs) {
-          if (fs.existsSync(dir)) {
-            const safety = isPathSafeToDelete(dir);
-            if (safety.safe && !foundCandidates.some((c) => c.path.toLowerCase() === dir.toLowerCase())) {
-              candidateIndex++;
-              try {
-                const stat = fs.statSync(dir);
-                foundCandidates.push({
-                  id: `leftover-${candidateIndex}`,
-                  type: stat.isDirectory() ? 'folder' : 'file',
-                  path: dir,
-                  targetScope: scope,
-                  sizeOrDetails: stat.isDirectory() ? 'Klasör ve alt dosyalar' : `${Math.round(stat.size / 1024)} KB`,
-                  selected: false // Varsayılan olarak SEÇİLİ DEĞİL
-                });
-              } catch {
-                // Okuma hatası olursa atla
-              }
-            }
+    for (const { root, scope } of scopes) {
+      if (!root) { warn(scope, 'Temizlik kök klasörü bulunamadı.'); continue; }
+      try { fs.readdirSync(root); } catch (error) { warn(root, error); continue; }
+      for (const target of buildCleanupCandidates(root, terms, publisher)) {
+        try {
+          // lstat reports access errors instead of turning them into an empty result.
+          let stat: fs.Stats;
+          try { stat = fs.lstatSync(target); } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+            throw error;
           }
-        }
+          const safety = isPathSafeToDelete(target, root);
+          if (!safety.safe) {
+            writeLog('WARN', 'Tarama hedefi korunuyor', { path: target, reason: safety.reason });
+            continue;
+          }
+          add({ type: stat.isDirectory() ? 'folder' : 'file', path: target, targetScope: scope,
+            sizeOrDetails: stat.isDirectory() ? 'Klasör ve alt dosyalar' : Math.round(stat.size / 1024) + ' KB' });
+        } catch (error) { warn(target, error); }
       }
     }
   }
 
-  // B. Registry Kalıntı Taraması (HKCU\Software ve HKLM\Software)
-  if (scanRegistry && process.platform === 'win32') {
-    const regRoots = [
+  if (scanRegistry) {
+    for (const { hive, scope } of [
       { hive: 'HKCU:\\Software', scope: 'HKCU\\Software' as const },
       { hive: 'HKLM:\\SOFTWARE', scope: 'HKLM\\Software' as const }
-    ];
-
-    for (const { hive, scope } of regRoots) {
-      for (const term of searchTerms) {
-        const testKeys = [
-          `${hive}\\${term}`,
-          publisher ? `${hive}\\${publisher}\\${term}` : null
-        ].filter(Boolean) as string[];
-
-        for (const regKey of testKeys) {
+    ]) {
+      for (const term of terms) {
+        const keys = [hive + '\\' + term, ...(isSafeName(publisher) ? [hive + '\\' + publisher + '\\' + term] : [])];
+        for (const key of keys) {
+          const normalized = key.replace('HKCU:\\', 'HKCU\\').replace('HKLM:\\', 'HKLM\\');
+          const safety = isRegistryKeySafeToDelete(normalized);
+          if (!safety.safe) {
+            writeLog('WARN', 'Registry tarama hedefi korunuyor', { path: normalized, reason: safety.reason });
+            continue;
+          }
           try {
             const { stdout } = await runPowerShell(
-              `if (Test-Path -LiteralPath ${toPowerShellLiteral(regKey)}) { Write-Output 'EXISTS' }`,
-              1024 * 1024
+              '$ErrorActionPreference = \'Stop\'; if (Test-Path -LiteralPath ' + toPowerShellLiteral(key) +
+              ' -ErrorAction Stop) { Get-Item -LiteralPath ' + toPowerShellLiteral(key) +
+              ' -ErrorAction Stop | Out-Null; Write-Output \'EXISTS\' } else { Write-Output \'MISSING\' }',
+              1024 * 1024,
+              10000
             );
-            if (stdout.includes('EXISTS')) {
-              const cleanPath = regKey.replace('HKCU:\\', 'HKCU\\').replace('HKLM:\\', 'HKLM\\');
-              const safety = isRegistryKeySafeToDelete(cleanPath);
-              if (safety.safe && !foundCandidates.some((c) => c.path.toLowerCase() === cleanPath.toLowerCase())) {
-                candidateIndex++;
-                foundCandidates.push({
-                  id: `leftover-${candidateIndex}`,
-                  type: 'registry_key',
-                  path: cleanPath,
-                  targetScope: scope,
-                  sizeOrDetails: 'Kayıt Defteri Anahtarı',
-                  selected: false // Varsayılan olarak SEÇİLİ DEĞİL
-                });
-              }
+            if (stdout.trim() === 'EXISTS') {
+              add({ type: 'registry_key', path: normalized, targetScope: scope, sizeOrDetails: 'Kayıt Defteri Anahtarı' });
+            } else if (stdout.trim() !== 'MISSING') {
+              warn(key, 'Registry sorgusu beklenen sonucu döndürmedi.');
             }
-          } catch {
-            // Anahtar yoksa veya sorgulanamazsa devam et
-          }
+          } catch (error) { warn(key, error); }
         }
       }
     }
   }
 
-  for (const candidate of foundCandidates) {
-    cachedLeftoversMap.set(candidate.id, candidate);
-  }
-
-  writeLog('INFO', 'Kalıntı taraması tamamlandı', {
-    app: appName,
-    foundCount: foundCandidates.length,
-    targets: foundCandidates.map((candidate) => candidate.path)
-  });
-
+  for (const item of items) cachedLeftoversMap.set(item.id, item);
+  writeLog(warnings.length ? 'ERROR' : 'INFO', 'Kalıntı taraması tamamlandı',
+    { app: appName, foundCount: items.length, warningCount: warnings.length, targets: items.map((item) => item.path) });
   return {
-    success: true,
-    items: foundCandidates,
-    message: `${foundCandidates.length} adet güvenli kalıntı adayı tespit edildi.`
+    success: warnings.length === 0,
+    items,
+    warnings,
+    ...(warnings.length ? { error: 'Tarama eksik kaldı. Ayrıntılar: ' + warnings.join(' | ') } : {}),
+    message: items.length + ' kalıntı adayı bulundu.'
   };
 });
 
 // 5. Kalıntıları Silme (Her öğe bağımsız try-catch ile raporlanır, asla sistem dosyası silinmez)
 ipcMain.handle('leftovers:delete', async (_event, args: { items: Array<Pick<LeftoverItem, 'id'>> }): Promise<LeftoverDeleteResult> => {
-  const requestedItems = Array.isArray(args.items) ? args.items : [];
+  const requestedItems = Array.isArray(args.items) ? [...new Map(args.items.map((item) => [item.id, item])).values()] : [];
   const items = requestedItems
     .map(({ id }) => cachedLeftoversMap.get(id))
     .filter((item): item is LeftoverItem => Boolean(item));
@@ -712,27 +594,31 @@ ipcMain.handle('leftovers:delete', async (_event, args: { items: Array<Pick<Left
 
   for (const item of items) {
     if (item.type === 'folder' || item.type === 'file') {
-      const safety = isPathSafeToDelete(item.path);
-      if (!safety.safe) {
-        failedCount++;
-        results.push({
-          id: item.id,
-          path: item.path,
-          success: false,
-          error: `Güvenlik Engeli: ${safety.reason}`
-        });
-        writeLog('ERROR', 'Dosya sistemi hedefi güvenlik kontrolünde engellendi', {
-          path: item.path,
-          reason: safety.reason
-        });
-        continue;
-      }
-
       try {
+        const safety = isPathSafeToDelete(item.path);
+        if (!safety.safe) {
+          failedCount++;
+          results.push({
+            id: item.id,
+            path: item.path,
+            success: false,
+            error: `Güvenlik Engeli: ${safety.reason}`
+          });
+          writeLog('ERROR', 'Dosya sistemi hedefi güvenlik kontrolünde engellendi', {
+            path: item.path,
+            reason: safety.reason
+          });
+          continue;
+        }
+
+        await assertNoLinkedChildren(item.path);
+        const recheck = isPathSafeToDelete(item.path);
+        if (!recheck.safe) throw new Error(recheck.reason);
         if (fs.existsSync(item.path)) {
           await fs.promises.rm(item.path, { recursive: true, force: true });
         }
         deletedCount++;
+        cachedLeftoversMap.delete(item.id);
         results.push({ id: item.id, path: item.path, success: true });
         writeLog('INFO', 'Kalıntı silindi', { type: item.type, path: item.path });
       } catch (err: unknown) {
@@ -762,6 +648,7 @@ ipcMain.handle('leftovers:delete', async (_event, args: { items: Array<Pick<Left
         // reg.exe delete "<Key>" /f ile anahtarı sil
         await execFileAsync('reg.exe', ['delete', item.path, '/f'], { windowsHide: true });
         deletedCount++;
+        cachedLeftoversMap.delete(item.id);
         results.push({ id: item.id, path: item.path, success: true });
         writeLog('INFO', 'Registry kalıntısı silindi', { path: item.path });
       } catch (err: unknown) {
@@ -847,7 +734,7 @@ ipcMain.handle('logs:open-folder', async (): Promise<{ success: boolean; path?: 
 // Electron Yaşam Döngüsü
 app.whenReady().then(async () => {
   writeLog('INFO', 'Sift Uninstaller başlatıldı', {
-    version: app.getVersion(),
+    version: APP_VERSION,
     platform: process.platform,
     packaged: app.isPackaged
   });

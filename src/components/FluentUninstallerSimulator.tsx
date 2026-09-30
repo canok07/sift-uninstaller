@@ -23,6 +23,8 @@ import {
   FolderOpen
 } from 'lucide-react';
 import { LeftoverCleanerModal } from './LeftoverCleanerModal';
+import { describeScan } from '../utils/operationResults';
+import { APP_VERSION } from '../version';
 import type { 
   InstalledProgram, 
   SystemInfo, 
@@ -249,6 +251,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   const [isLeftoverModalOpen, setIsLeftoverModalOpen] = useState(false);
   const [leftoverTargetAppName, setLeftoverTargetAppName] = useState<string>('');
   const [scannedLeftoverItems, setScannedLeftoverItems] = useState<LeftoverItem[]>([]);
+  const [scanWarning, setScanWarning] = useState<string | undefined>();
 
   // Aktif Kaldırma İşlemi (Satır kilidi ve asenkron takip)
   const [activeUninstallingAppId, setActiveUninstallingAppId] = useState<string | null>(null);
@@ -541,18 +544,20 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         if (!isMountedRef.current) return;
         setActiveUninstallingAppId(null);
 
-        if (result.success) {
+        if (result.success && result.verified) {
           // Başarılı: Listeden kaldır
           setApps((prev) => prev.filter((a) => a.id !== app.id));
           if (selectedAppId === app.id) setSelectedAppId(null);
 
           setNotification({
-            text: `'${app.name}' başarıyla kaldırıldı (Çıkış kodu: ${result.exitCode ?? 0}). Kalıntı taraması başlatılıyor...`,
+            text: `'${app.name}' kaldırıldığı doğrulandı. ${result.rebootRequired ? 'Windows yeniden başlatılmalı; temizlik yeniden başlatma sonrasına bırakıldı.' : 'Kalıntı taraması başlatılıyor...'}`,
             type: 'success'
           });
 
           // Otomatik kalıntı taraması başlat
-          triggerDeepClean(app);
+          if (!result.rebootRequired) triggerDeepClean(app);
+        } else if (result.rebootRequired && result.success) {
+          setNotification({ text: result.message || 'Windows yeniden başlatılmalı. Program listede tutuldu.', type: 'info' });
         } else {
           // Başarısız: Kesinlikle listeden SİLME, hata mesajını göster
           setNotification({
@@ -594,6 +599,8 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
     setCanClean(false);
     setFoundFilesCount(0);
     setFoundRegCount(0);
+    setScannedLeftoverItems([]);
+    setScanWarning(undefined);
 
     if (isElectronEnvironment && window.api?.scanLeftovers) {
       try {
@@ -605,31 +612,35 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
         if (!isMountedRef.current) return;
 
-        setProgressValue(100);
+        setProgressValue(scanRes.success ? 100 : 0);
         setIsScanning(false);
+        const scanStatus = describeScan(scanRes);
+        setScanWarning(scanStatus.type === 'error' ? scanStatus.text : undefined);
+        setPanelStatus(scanStatus.text);
 
-        if (scanRes.success && scanRes.items.length > 0) {
+        if (scanRes.items.length > 0) {
           const files = scanRes.items.filter((i) => i.type === 'folder' || i.type === 'file').length;
           const regs = scanRes.items.filter((i) => i.type === 'registry_key').length;
           setFoundFilesCount(files);
           setFoundRegCount(regs);
           setCanClean(true);
-          setPanelStatus(`${files} dosya/klasör ve ${regs} kayıt defteri kalıntı adayı bulundu.`);
+          setPanelStatus(`${files} dosya/klasör ve ${regs} Registry adayı. ${scanRes.success ? '' : 'Tarama eksik; hata bildirimi ve logları inceleyin.'}`);
           setScannedLeftoverItems(scanRes.items);
           setLeftoverTargetAppName(targetApp.name);
           // Kullanıcı onayı için modalı aç
           setIsLeftoverModalOpen(true);
+          if (scanStatus.type === 'error') setNotification({ text: scanStatus.text, type: 'error' });
         } else {
           setCanClean(false);
-          setPanelStatus('Kalıntı bulunamadı. Sistem temiz görünüyor.');
-          setNotification({ text: `'${targetApp.name}' için ek kalıntı tespit edilmedi.`, type: 'info' });
-          safeSetTimeout(() => setNotification(null), 3000);
+          setNotification({ text: scanStatus.text, type: scanStatus.type });
         }
       } catch (err: unknown) {
         if (!isMountedRef.current) return;
         setIsScanning(false);
         const msg = err instanceof Error ? err.message : String(err);
         setPanelStatus(`Tarama hatası: ${msg}`);
+        setProgressValue(0);
+        setNotification({ text: `Tarama hatası: ${msg}`, type: 'error' });
       }
     } else {
       // Demo ortamı için temsili güvenli örnekler (seçilmemiş olarak)
@@ -1230,7 +1241,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           </div>
 
           <div className="flex items-center gap-3">
-            <span>Sift Uninstaller © 2026</span>
+            <span>Sift Uninstaller {APP_VERSION} © 2026</span>
           </div>
         </div>
       </div>
@@ -1314,18 +1325,15 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         <LeftoverCleanerModal
           appName={leftoverTargetAppName}
           initialItems={scannedLeftoverItems}
+          scanWarning={scanWarning}
           onClose={() => setIsLeftoverModalOpen(false)}
-          onCleanSuccess={(cleanedCount) => {
-            setIsLeftoverModalOpen(false);
-            setCanClean(false);
-            setFoundFilesCount(0);
-            setFoundRegCount(0);
-            setPanelStatus(`Temizlik tamamlandı: ${cleanedCount} adet kalıntı öğe başarıyla silindi.`);
-            setNotification({
-              text: `Kalıntı temizliği başarıyla tamamlandı: ${cleanedCount} öğe silindi.`,
-              type: 'success'
-            });
-            safeSetTimeout(() => setNotification(null), 4000);
+          onCleanSuccess={(cleanedCount, deletedItems) => {
+            const remaining = scannedLeftoverItems.filter((item) => !deletedItems.some((deleted) => deleted.id === item.id));
+            setScannedLeftoverItems(remaining);
+            setCanClean(remaining.length > 0);
+            setFoundFilesCount(remaining.filter((item) => item.type !== 'registry_key').length);
+            setFoundRegCount(remaining.filter((item) => item.type === 'registry_key').length);
+            setPanelStatus(`${cleanedCount} öğe silindi; ${remaining.length} aday kaldı. İşlem ayrıntıları temizlik penceresinde.`);
           }}
         />
       )}

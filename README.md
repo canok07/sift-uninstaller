@@ -1,134 +1,147 @@
-# Sift Uninstaller (Windows Masaüstü Uygulaması)
+# Sift Uninstaller
 
-Modern, hafif ve güvenli bir Windows program kaldırıcı ve artık temizleme masaüstü uygulamasıdır. Electron, React, TypeScript ve Tailwind CSS ile geliştirilmiştir.
+A Windows desktop app for managing installed programs and reviewing leftover cleanup candidates.
 
-## 🇹🇷 0.5.1.5 Toplu Güncelleme
+[English](#english) · [Türkçe](#türkçe) · [Downloads](https://github.com/canok07/sift-uninstaller/releases) · [Report an issue](https://github.com/canok07/sift-uninstaller/issues)
 
-- Kurulu yazılımlar **Masaüstü Programları**, **Store Uygulamaları** ve **Windows Bileşenleri** sekmelerinde ayrıldı.
-- Microsoft Store/MSIX uygulamalarını Windows'un kendi `Remove-AppxPackage` yöntemiyle kaldırma desteği eklendi.
-- Bir program satırına çift tıklayınca güvenli kaldırma onayı açılıyor; işlem onaysız başlamıyor.
-- Windows sistem bileşenleri belirgin şekilde işaretleniyor ve kaldırma öncesinde ek risk uyarısı gösteriliyor.
-- Kurulum tarihine göre sıralama eklendi; hatalı ve gelecekteki Registry tarihleri güvenilmez kabul ediliyor.
-- Tarama, kaldırma ve kalıntı temizleme işlemleri kalıcı hata günlüğüne yazılıyor. Log dosyasına **Ayarlar → Logları Aç** yoluyla ulaşılabilir.
+## English
 
-## 🇬🇧 0.5.1.5 Batch Update
+### About
 
-- Installed software is separated into **Desktop Programs**, **Store Apps**, and **Windows Components** tabs.
-- Microsoft Store/MSIX apps can be removed through Windows' native `Remove-AppxPackage` mechanism.
-- Double-clicking an app row opens a safe uninstall confirmation; removal never starts without approval.
-- Windows system components are clearly marked and display an additional risk warning before removal.
-- Install-date sorting was added; malformed and future Registry dates are treated as unreliable.
-- Scan, uninstall, and leftover-cleanup operations are written to a persistent diagnostic log. Open it through **Settings → Open Logs**.
+Sift Uninstaller brings desktop programs, Microsoft Store apps and Windows components into one interface. It uses Windows Registry and AppX information to list installed software, launches native uninstallers and offers a separate, user-reviewed cleanup step.
 
----
+The project is under active development in the **0.5 series**. The current source version is **0.5.1.6**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases).
 
-## 🌟 Temel Özellikler
+### Features
 
-- **Gerçek Windows Kayıt Defteri (Registry) Entegrasyonu**:
-  - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall` (64-bit Sistem Programları)
-  - `HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall` (32-bit Sistem Programları)
-  - `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall` (Kullanıcı Düzeyi Programlar)
-  - Mevcut kullanıcı için kaldırılabilir Microsoft Store/MSIX paketleri
-- **Güvenli Çift Süreç (Main & Renderer) Mimarisi**:
-  - `contextIsolation: true` ve `nodeIntegration: false` ile tam yalıtım.
-  - Renderer sürecinin sisteme doğrudan erişmesi engellenmiştir; tüm işlemler güvenli `preload.cjs` ve doğrulanmış `window.api` IPC kanalları üzerinden yürütülür.
-- **Kesin Kullanıcı Onayı İlkesi**:
-  - Kullanıcı açıkça onay vermeden hiçbir kaldırma işlemi başlatılmaz.
-  - Artık temizleme aşamasında hiçbir dosya veya kayıt defteri girdisi varsayılan olarak seçilmez; kullanıcı tek tek inceleyip onaylamalıdır.
-- **Sistem Kök Dizin Koruması (Blacklist & Whitelist)**:
-  - `Windows`, `System32`, `SysWOW64`, `Program Files`, `Users` kök dizinleri veya ana kovanlar (`HKLM`, `HKCU\Software`) asla silinemez; minimum 3 kademe derinlik şartı aranır.
-- **Windows Sistem Geri Yükleme Noktası**:
-  - Kaldırma öncesinde Windows System Restore API ile otomatik geri yükleme noktası oluşturma desteği.
-- **Çift Mod Desteği (Masaüstü & Demo)**:
-  - Electron içinde gerçek Windows verileri okunur ve çalıştırılır.
-  - Tarayıcı önizlemesinde kullanıcıya açıkça **"Demo Modu"** uyarısı verilir.
+- **Organized application list:** separate tabs for Desktop Programs, Store Apps and Windows Components, plus an all-apps view.
+- **Search and sorting:** search by application, publisher or Registry path; sort by name, size, publisher or installation date where the information is available.
+- **Native uninstalling:** run registered desktop uninstallers or remove current-user Store/MSIX packages through Windows. Double-clicking a row opens a confirmation dialog rather than immediately removing it.
+- **Removal verification:** check Registry or AppX presence after the uninstaller exits. Entries remain listed when removal cannot be confirmed; cleanup is deferred when a restart is required.
+- **Focused leftover review:** look for name-based folder and Registry candidates in selected AppData, LocalAppData, ProgramData, HKCU Software and HKLM Software locations. Nothing is selected for deletion by default.
+- **Cleanup safeguards:** exclude shared publisher roots, restrict file targets to allowed locations, and reject junction/link targets and protected Registry areas. Partial failures remain visible in the cleanup window.
+- **Optional uninstall settings:** attempt a Windows restore point before removal and enable silent options for recognized MSI, Inno Setup and NSIS uninstallers.
+- **Diagnostics and appearance:** persistent operation/error logs, a system/permission status panel, and light/dark themes.
 
----
+### Install and use
 
-## 🚀 Kurulum ve Başlangıç
+The desktop build targets **64-bit Windows 10 and Windows 11**. A packaged installation does not require Node.js.
 
-### Gereksinimler
-- **Node.js**: v18.0.0 veya üzeri (LTS önerilir)
-- **İşletim Sistemi**: Windows 10 / Windows 11 (Masaüstü Registry işlevleri için)
+1. Download an available `Sift Uninstaller-Setup-<version>.exe` from [Releases](https://github.com/canok07/sift-uninstaller/releases) and run the installer.
+2. Launch Sift Uninstaller and approve the Windows administrator prompt. The packaged app requires administrator access.
+3. Select a category, find the program, and open the uninstall confirmation using the row's action or a double-click.
+4. After verified removal, review any cleanup candidates. Select only the items you recognize and want to delete.
 
-### Bağımlılıkları Yükleme
-```bash
-npm install
-```
+Open diagnostics through **Settings → Open Logs** (currently labelled **Ayarlar → Logları Aç** in the Turkish interface).
 
----
+### Important limitations
 
-## 💻 Geliştirme (Development)
+- Leftover detection uses names and a limited set of locations. It is not a full-drive scan and does not guarantee that every leftover is found or that every name match belongs to the selected app.
+- Cleanup permanently deletes selected files, folders and Registry keys. Review paths carefully and back up important data first.
+- Removing Windows components can affect the operating system. Their category and extra warning are not a recommendation to remove them.
+- Size, publisher and installation dates depend on Windows/app metadata. Missing, malformed or future dates are displayed as unavailable rather than guessed.
+- Restore-point creation depends on Windows System Protection, permissions and frequency limits. Removal can continue if the restore-point attempt fails; a restore point is not a complete file backup.
+- Browser preview is **demo mode**: it cannot read the computer's real Registry or uninstall installed programs.
+- Logs can contain application names and local paths. Review them before sharing an issue report.
 
-### 1. Masaüstü Electron Modunda Çalıştırma (Gerçek Windows Registry)
-Masaüstü uygulamasını geliştirme modunda başlatır:
-```bash
+### Development
+
+The project uses **Electron, React, TypeScript, Vite and Tailwind CSS**. Use Windows, **Node.js 22.12 or newer**, and npm for local development.
+
+```powershell
+npm ci
 npm run electron:dev
 ```
-*Bu komut Electron ana/preload dosyalarını hazırlar, yerel Vite sunucusunu başlatır ve uygulama penceresini açar. Geliştirici araçları varsayılan olarak kapalıdır.*
 
-Geliştirici araçlarıyla çalıştırmak gerekirse:
-```bash
-npm run electron:devtools
-```
+| Command | Purpose |
+| --- | --- |
+| `npm run electron:dev` | Desktop development with real Windows integration |
+| `npm run electron:devtools` | Desktop development with developer tools |
+| `npm run dev` | Browser demo at `http://127.0.0.1:3000` |
+| `npm test` | Regression tests using isolated fixtures; Windows presence checks are read-only |
+| `npm run lint` | TypeScript checking |
+| `npm run dist` | Build a Windows NSIS installer in `release/` |
+| `npm run dist:dir` | Build an unpacked application in `release/win-unpacked/` |
 
-### 2. Tarayıcıda Önizleme Modunda Çalıştırma (Demo Modu)
-Arayüzü hızlıca test etmek için Vite geliştirme sunucusunu başlatır:
-```bash
-npm run dev
-```
-*Tarayıcıda açıldığında (`http://127.0.0.1:3000`) açıkça "Demo Modu" etiketiyle çalışır.*
+For the unpacked build, keep the entire output folder together; the executable is not a standalone file. Development mode does not automatically require elevation; privileged operations may need an elevated terminal.
 
----
+### Project structure
 
-## 📦 Paketleme ve Kurulum Dosyası Üretimi (Packaging)
+- `electron/`: Windows integration, uninstall verification, cleanup validation and the IPC bridge.
+- `src/`: React interface, shared types, result presentation and version display.
+- `tests/`: regression coverage for cleanup safety, scan results and uninstall verification.
+- `electron-builder.config.cjs`: Windows packaging and version mapping.
 
-`electron-builder` kullanılarak Windows için kurulabilir Setup.exe veya taşınabilir klasör üretilir:
-
-### 1. Windows Kurulabilir Setup.exe Üretme (`npm run dist`)
-Windows için optimize edilmiş, imzalanabilir NSIS kurulum sihirbazı (`Setup.exe`) üretmek için:
-```bash
-npm run dist
-```
-Üretilen kurulum dosyası:
-```
-release/Sift Uninstaller-Setup-0.5.1.5.exe
-```
-
-### 2. Paketlenmiş Taşınabilir Klasör (Unpacked Dir) Üretme
-Kurulum sihirbazı olmadan doğrudan çalıştırılabilir klasör çıktısı almak için:
-```bash
-npm run dist:dir
-```
-Üretilen klasör:
-```
-release/win-unpacked/Sift Uninstaller.exe
-```
+Report problems on [GitHub Issues](https://github.com/canok07/sift-uninstaller/issues), including the app version, Windows version, steps to reproduce and relevant log excerpts with private information removed.
 
 ---
 
-## 📁 Proje Dizin Yapısı
+## Türkçe
 
+### Hakkında
+
+Sift Uninstaller; masaüstü programlarını, Microsoft Store uygulamalarını ve Windows bileşenlerini tek arayüzde yönetmenize yardımcı olan bir Windows masaüstü uygulamasıdır. Kurulu yazılımları Windows Registry ve AppX bilgilerinden listeler, yerel kaldırıcıları çalıştırır ve ayrı bir aşamada kullanıcı onaylı kalıntı temizliği sunar.
+
+Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel kaynak kod sürümü **0.5.1.6**'dır. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır.
+
+### Özellikler
+
+- **Düzenli uygulama listesi:** Masaüstü Programları, Store Uygulamaları ve Windows Bileşenleri için ayrı sekmeler; ayrıca tüm uygulamaları gösteren görünüm.
+- **Arama ve sıralama:** uygulama adı, yayıncı veya Registry yoluyla arama; bilgi mevcut olduğunda ad, boyut, yayıncı ve kurulum tarihine göre sıralama.
+- **Windows üzerinden kaldırma:** kayıtlı masaüstü kaldırıcılarını çalıştırma ve mevcut kullanıcının Store/MSIX paketlerini Windows üzerinden kaldırma. Satıra çift tıklamak doğrudan silmez, onay penceresini açar.
+- **Kaldırma doğrulaması:** kaldırıcı kapandıktan sonra Registry veya AppX varlığını kontrol etme. Kaldırılması doğrulanamayan uygulamalar listede kalır; yeniden başlatma gerektiğinde temizlik ertelenir.
+- **Hedefli kalıntı incelemesi:** seçilen AppData, LocalAppData, ProgramData, HKCU Software ve HKLM Software alanlarında ada dayalı klasör ve Registry adaylarını arama. Hiçbir öğe varsayılan olarak silinmek üzere seçilmez.
+- **Temizlik korumaları:** ortak yayıncı köklerini adaylardan çıkarma, dosya hedeflerini izin verilen alanlarla sınırlandırma; junction/bağlantı hedeflerini ve korunan Registry alanlarını engelleme. Kısmi başarısızlıklar temizlik penceresinde görünür kalır.
+- **İsteğe bağlı kaldırma ayarları:** kaldırma öncesinde Windows geri yükleme noktası oluşturmayı deneme; tanınan MSI, Inno Setup ve NSIS kaldırıcıları için sessiz seçenekler.
+- **Tanılama ve görünüm:** kalıcı işlem/hata günlükleri, sistem ve yetki durumu paneli, açık ve koyu tema.
+
+### Kurulum ve kullanım
+
+Masaüstü sürümü **64 bit Windows 10 ve Windows 11** için hazırlanır. Paketlenmiş uygulamayı kullanmak için Node.js gerekmez.
+
+1. [Releases](https://github.com/canok07/sift-uninstaller/releases) sayfasından mevcut `Sift Uninstaller-Setup-<sürüm>.exe` dosyasını indirip kurulum sihirbazını çalıştırın.
+2. Sift Uninstaller'ı açıp Windows yönetici izni isteğini onaylayın. Paketlenmiş uygulama yönetici yetkisi gerektirir.
+3. İlgili sekmeden programı bulun. Satırdaki kaldırma eylemini kullanarak veya çift tıklayarak onay penceresini açın.
+4. Kaldırma doğrulandıktan sonra bulunan temizlik adaylarını inceleyin. Yalnızca tanıdığınız ve silmek istediğiniz öğeleri seçin.
+
+İşlem günlüklerine **Ayarlar → Logları Aç** yoluyla ulaşabilirsiniz.
+
+### Bilinmesi gerekenler
+
+- Kalıntı taraması, ad eşleşmelerini ve belirli alanları kullanır. Tüm diski taramaz; bütün kalıntıları bulmayı veya her ad eşleşmesinin seçilen programa ait olduğunu garanti etmez.
+- Temizlik, seçili dosyaları, klasörleri ve Registry anahtarlarını kalıcı olarak siler. Yolları dikkatle inceleyin ve önemli verilerinizi önceden yedekleyin.
+- Windows bileşenlerini kaldırmak işletim sistemini etkileyebilir. Ayrı sekmede gösterilmeleri ve ek uyarı bulunması, kaldırılmalarının önerildiği anlamına gelmez.
+- Boyut, yayıncı ve kurulum tarihi Windows/uygulama verilerine bağlıdır. Eksik, hatalı veya gelecekteki tarihler tahmin edilmez; belirtilmemiş olarak gösterilir.
+- Geri yükleme noktası oluşturmak Windows Sistem Korumasına, yetkilere ve sıklık sınırlarına bağlıdır. Bu deneme başarısız olduğunda kaldırma devam edebilir; geri yükleme noktası tam bir dosya yedeği değildir.
+- Tarayıcı önizlemesi **demo modudur**: bilgisayarın gerçek Registry verilerini okuyamaz veya kurulu programları kaldıramaz.
+- Günlükler uygulama adları ve yerel dosya yolları içerebilir. Hata bildirimiyle paylaşmadan önce inceleyin.
+
+### Geliştirme
+
+Proje **Electron, React, TypeScript, Vite ve Tailwind CSS** kullanır. Yerel geliştirme için Windows, **Node.js 22.12 veya üzeri** ve npm gerekir.
+
+```powershell
+npm ci
+npm run electron:dev
 ```
-.
-├── electron/
-│   ├── main.ts         # Ana süreç (Registry okuma, güvenli process çalıştırma, IPC)
-│   └── preload.ts      # Güvenli contextBridge API köprüsü (window.api)
-├── src/
-│   ├── components/     # React arayüz bileşenleri (Fluent tasarım, modal dialoglar)
-│   ├── types.ts        # TypeScript tip tanımları (IPC ve veri modelleri)
-│   ├── App.tsx         # Ana React uygulama sarmalayıcısı
-│   └── main.tsx        # React DOM giriş noktası
-├── dist/               # Vite derleme çıktısı (HTML/JS/CSS)
-├── dist-electron/      # esbuild ile derlenmiş Electron CJS dosyaları
-├── release/            # electron-builder tarafından üretilen Setup.exe çıktısı
-├── package.json        # Bağımlılıklar, scriptler ve build konfigürasyonu
-└── README.md           # Proje belgelendirmesi
-```
 
----
+| Komut | İşlev |
+| --- | --- |
+| `npm run electron:dev` | Gerçek Windows entegrasyonuyla masaüstü geliştirme |
+| `npm run electron:devtools` | Geliştirici araçları açık masaüstü geliştirme |
+| `npm run dev` | `http://127.0.0.1:3000` adresinde tarayıcı demosu |
+| `npm test` | Ayrı test verileriyle regresyon testleri; Windows varlık kontrolleri salt okunurdur |
+| `npm run lint` | TypeScript denetimi |
+| `npm run dist` | `release/` altında Windows NSIS kurulum dosyası üretme |
+| `npm run dist:dir` | `release/win-unpacked/` altında paketlenmiş uygulama klasörü üretme |
 
-## 🛡️ Güvenlik ve Uyumluluk Notları
+Kurulumsuz klasör çıktısını kullanırken bütün dosyaları birlikte tutun; EXE tek başına çalışacak bağımsız bir dosya değildir. Geliştirme modu otomatik olarak yönetici yetkisi istemez; yetki gerektiren işlemler için terminali yönetici olarak açmanız gerekebilir.
 
-1. **Rastgele Komut Çalıştırma Engeli**: Renderer sürecinden gelen rastgele shell komutları kabul edilmez. Yalnızca Registry taramasında önbelleğe alınmış ve doğrulanmış `appId` değerlerinin `UninstallString` komutları çalıştırılır.
-2. **Yönetici Yetkisi (Run as Administrator)**: Sistem düzeyindeki uygulamaları kaldırmak ve korumalı kalıntıları temizlemek için uygulama yönetici yetkisiyle açılır. Uygulama manifestinde `requestedExecutionLevel: requireAdministrator` kullanılır.
+### Proje yapısı
+
+- `electron/`: Windows entegrasyonu, kaldırma doğrulaması, temizlik hedeflerinin denetimi ve IPC köprüsü.
+- `src/`: React arayüzü, ortak tipler, işlem sonuçlarının gösterimi ve sürüm bilgisi.
+- `tests/`: temizlik güvenliği, tarama sonuçları ve kaldırma doğrulaması için regresyon testleri.
+- `electron-builder.config.cjs`: Windows paketleme ayarları ve sürüm eşlemesi.
+
+Sorunları [GitHub Issues](https://github.com/canok07/sift-uninstaller/issues) üzerinden bildirebilirsiniz. Uygulama sürümünü, Windows sürümünü, tekrar oluşturma adımlarını ve özel bilgileri çıkarılmış ilgili günlük satırlarını ekleyin.

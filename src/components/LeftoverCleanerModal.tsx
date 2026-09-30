@@ -13,10 +13,12 @@ import {
   X
 } from 'lucide-react';
 import { LeftoverItem } from '../types';
+import { describeCleanup } from '../utils/operationResults';
 
 interface LeftoverCleanerModalProps {
   appName: string;
   initialItems: LeftoverItem[];
+  scanWarning?: string;
   onClose: () => void;
   onCleanSuccess: (cleanedCount: number, deletedItems: LeftoverItem[]) => void;
 }
@@ -24,6 +26,7 @@ interface LeftoverCleanerModalProps {
 export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
   appName,
   initialItems,
+  scanWarning,
   onClose,
   onCleanSuccess
 }) => {
@@ -35,6 +38,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
   const [isCleaning, setIsCleaning] = useState(false);
   const [cleaningLogs, setCleaningLogs] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [resultSummary, setResultSummary] = useState<string | null>(null);
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -70,6 +74,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
     }
 
     setErrorMessage(null);
+    setResultSummary(null);
     setIsCleaning(true);
     setCleaningLogs([
       `[Güvenlik Kontrolü] Silme hedefleri doğrulanıyor (Toplam: ${selectedItems.length})...`
@@ -102,20 +107,13 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
 
         setCleaningLogs((prev) => [...prev, ...newLogs]);
 
-        if (deleteResult.deletedCount > 0) {
-          // Gerçekten silinen öğeleri yerel listeden kaldır
-          setItems((prev) => prev.filter((i) => !actuallyDeleted.some((d) => d.id === i.id)));
-          setTimeout(() => {
-            if (isMountedRef.current) {
-              setIsCleaning(false);
-              onCleanSuccess(deleteResult.deletedCount, actuallyDeleted);
-            }
-          }, 800);
-        } else {
-          // Hiçbir öğe silinememişse ASLA sahte başarı gösterme
-          setIsCleaning(false);
-          setErrorMessage(deleteResult.error || 'Seçilen hiçbir öğe silinemedi (Dosyalar kilitli veya yetki yetersiz).');
-        }
+        const outcome = describeCleanup(deleteResult);
+        setItems((prev) => prev.filter((item) => !outcome.deletedIds.includes(item.id)));
+        setResultSummary(outcome.summary);
+        setIsCleaning(false);
+        setErrorMessage(outcome.error);
+        // The parent updates remaining targets; this dialog stays open for inspection.
+        onCleanSuccess(actuallyDeleted.length, actuallyDeleted);
       } catch (err: unknown) {
         if (!isMountedRef.current) return;
         const msg = err instanceof Error ? err.message : String(err);
@@ -135,6 +133,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
         setIsCleaning(false);
         // Demo ortamında arayüz testini sağlamak için yerel listeyi güncelle
         setItems((prev) => prev.filter((i) => !i.selected));
+        setResultSummary(`[Demo] ${selectedItems.length} öğe arayüzden kaldırıldı.`);
         onCleanSuccess(selectedItems.length, selectedItems);
       }, 600);
     }
@@ -222,6 +221,16 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
         </div>
 
         {/* Hata Bildirimi */}
+        {scanWarning && (
+          <div role="alert" className="px-5 py-2.5 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 text-xs">
+            {scanWarning}
+          </div>
+        )}
+        {resultSummary && (
+          <div role="status" className="px-5 py-2.5 border-b border-slate-200 dark:border-zinc-800 text-xs text-slate-700 dark:text-zinc-200">
+            {resultSummary} Ayrıntıları inceledikten sonra bu pencereyi kapatabilirsiniz.
+          </div>
+        )}
         {errorMessage && (
           <div className="px-5 py-2.5 bg-rose-50 dark:bg-rose-950/40 border-b border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-xs flex items-center justify-between">
             <span>{errorMessage}</span>

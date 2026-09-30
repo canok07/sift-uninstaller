@@ -40,6 +40,8 @@ export interface UninstallOptions {
 
 export interface UninstallResult {
   success: boolean;
+  verified?: boolean;
+  rebootRequired?: boolean;
   exitCode?: number | null;
   error?: string;
   message?: string;
@@ -74,6 +76,7 @@ export interface LeftoverScanResult {
   items: LeftoverItem[];
   error?: string;
   message?: string;
+  warnings?: string[];
 }
 
 export interface LeftoverDeleteResult {
