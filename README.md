@@ -10,7 +10,7 @@ A Windows desktop app for managing installed programs and reviewing leftover cle
 
 Sift Uninstaller brings desktop programs, Microsoft Store apps and Windows components into one interface. It uses Windows Registry and AppX information to list installed software, launches native uninstallers and offers a separate, user-reviewed cleanup step.
 
-The project is under active development in the **0.5 series**. The current source version is **0.5.1.6**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases).
+The project is under active development in the **0.5 series**. The current source version is **0.5.1.7**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases).
 
 ### Features
 
@@ -74,6 +74,10 @@ For the unpacked build, keep the entire output folder together; the executable i
 
 Report problems on [GitHub Issues](https://github.com/canok07/sift-uninstaller/issues), including the app version, Windows version, steps to reproduce and relevant log excerpts with private information removed.
 
+### License
+
+Sift Uninstaller is licensed under the [MIT License](LICENSE). Existing file-specific notices and third-party dependency licenses remain applicable.
+
 ---
 
 ## Türkçe
@@ -82,7 +86,7 @@ Report problems on [GitHub Issues](https://github.com/canok07/sift-uninstaller/i
 
 Sift Uninstaller; masaüstü programlarını, Microsoft Store uygulamalarını ve Windows bileşenlerini tek arayüzde yönetmenize yardımcı olan bir Windows masaüstü uygulamasıdır. Kurulu yazılımları Windows Registry ve AppX bilgilerinden listeler, yerel kaldırıcıları çalıştırır ve ayrı bir aşamada kullanıcı onaylı kalıntı temizliği sunar.
 
-Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel kaynak kod sürümü **0.5.1.6**'dır. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır.
+Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel kaynak kod sürümü **0.5.1.7**'dir. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır.
 
 ### Özellikler
 
@@ -145,3 +149,7 @@ Kurulumsuz klasör çıktısını kullanırken bütün dosyaları birlikte tutun
 - `electron-builder.config.cjs`: Windows paketleme ayarları ve sürüm eşlemesi.
 
 Sorunları [GitHub Issues](https://github.com/canok07/sift-uninstaller/issues) üzerinden bildirebilirsiniz. Uygulama sürümünü, Windows sürümünü, tekrar oluşturma adımlarını ve özel bilgileri çıkarılmış ilgili günlük satırlarını ekleyin.
+
+### Lisans
+
+Sift Uninstaller, [MIT Lisansı](LICENSE) ile sunulur. Dosyalardaki mevcut özel lisans bildirimleri ve üçüncü taraf bağımlılıkların kendi lisansları geçerliliğini korur.

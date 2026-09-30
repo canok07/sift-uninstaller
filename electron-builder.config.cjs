@@ -10,7 +10,7 @@ module.exports = {
   npmRebuild: false,
   copyright: 'Copyright © 2026 Sift Uninstaller',
   directories: { output: 'release' },
-  files: ['dist/**/*', 'dist-electron/**/*', 'package.json'],
+  files: ['dist/**/*', 'dist-electron/**/*', 'package.json', 'LICENSE'],
   buildVersion: windowsVersion,
   buildNumber: match[4],
   extraMetadata: { shortVersion: windowsVersion, shortVersionWindows: windowsVersion },
