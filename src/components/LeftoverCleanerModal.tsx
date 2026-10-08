@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { LeftoverItem } from '../types';
 import { describeCleanup } from '../utils/operationResults';
+import type { HistoryStatus } from '../utils/operationHistory';
 
 interface LeftoverCleanerModalProps {
   appName: string;
@@ -21,6 +22,7 @@ interface LeftoverCleanerModalProps {
   scanWarning?: string;
   onClose: () => void;
   onCleanSuccess: (cleanedCount: number, deletedItems: LeftoverItem[]) => void;
+  onResult?: (status: HistoryStatus, message: string, demo: boolean) => void;
 }
 
 export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
@@ -28,7 +30,8 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
   initialItems,
   scanWarning,
   onClose,
-  onCleanSuccess
+  onCleanSuccess,
+  onResult
 }) => {
   // Güvenlik gereksinimi: Varsayılan olarak hiçbir şey seçili olmasın (selected: false)
   const [items, setItems] = useState<LeftoverItem[]>(() =>
@@ -89,6 +92,8 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
         ]);
 
         const deleteResult = await window.api.deleteLeftovers(selectedItems);
+        const outcome = describeCleanup(deleteResult);
+        onResult?.(outcome.error ? 'error' : 'success', outcome.error || outcome.summary, false);
 
         if (!isMountedRef.current) return;
 
@@ -107,7 +112,6 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
 
         setCleaningLogs((prev) => [...prev, ...newLogs]);
 
-        const outcome = describeCleanup(deleteResult);
         setItems((prev) => prev.filter((item) => !outcome.deletedIds.includes(item.id)));
         setResultSummary(outcome.summary);
         setIsCleaning(false);
@@ -115,6 +119,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
         // The parent updates remaining targets; this dialog stays open for inspection.
         onCleanSuccess(actuallyDeleted.length, actuallyDeleted);
       } catch (err: unknown) {
+        onResult?.('error', err instanceof Error ? err.message : String(err), false);
         if (!isMountedRef.current) return;
         const msg = err instanceof Error ? err.message : String(err);
         setIsCleaning(false);
@@ -130,6 +135,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
 
       setTimeout(() => {
         if (!isMountedRef.current) return;
+        onResult?.('success', `Demo: ${selectedItems.length} öğe arayüzden kaldırıldı; gerçek veri silinmedi.`, true);
         setIsCleaning(false);
         // Demo ortamında arayüz testini sağlamak için yerel listeyi güncelle
         setItems((prev) => prev.filter((i) => !i.selected));

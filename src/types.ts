@@ -9,6 +9,7 @@ export type RegistryHive =
 
 export interface InstalledProgram {
   id: string;
+  revision?: string; // Demo entries have no IPC authorization revision.
   displayName: string;
   displayVersion?: string;
   publisher?: string;
@@ -25,6 +26,7 @@ export interface InstalledProgram {
   isSystemComponent?: boolean;
   category?: 'desktop' | 'store' | 'system';
   packageFullName?: string;
+  packageName?: string; // Technical AppX name, never replace with a friendly label.
 }
 
 export interface SystemInfo {
@@ -36,6 +38,7 @@ export interface SystemInfo {
 
 export interface UninstallOptions {
   silent?: boolean;
+  expectedRevision?: string;
 }
 
 export interface UninstallResult {
@@ -45,7 +48,25 @@ export interface UninstallResult {
   exitCode?: number | null;
   error?: string;
   message?: string;
+  operationId?: string;
+  cancelled?: boolean;
+  timedOut?: boolean;
+  externalStillRunning?: boolean;
+  backgroundPending?: boolean;
 }
+
+export type UninstallActivity = { active: false } | {
+  active: true;
+  operationId: string;
+  appId: string;
+  appName: string;
+  startedAt: number;
+  deadlineAt: number;
+  phase: 'running' | 'verifying';
+  awaitingResult: boolean;
+  externalStillRunning: boolean;
+  stopReason?: 'cancelled' | 'timedOut';
+};
 
 export type LeftoverType = 'folder' | 'file' | 'registry_key';
 
@@ -104,18 +125,53 @@ export interface InstalledProgramsResult {
   programs: InstalledProgram[];
   error?: string;
   isDemo?: boolean;
+  sources?: InventorySource[];
+  partial?: boolean;
+  warnings?: string[];
 }
+
+export interface InventorySource {
+  id: 'HKLM' | 'WOW6432Node' | 'HKCU' | 'APPX';
+  status: 'ok' | 'missing' | 'error';
+  count: number;
+  error?: string;
+}
+
+export interface RendererErrorReport {
+  kind: 'error' | 'unhandledrejection' | 'react';
+  message: string;
+  stack?: string;
+}
+
+export interface BackupEntry {
+  id: string;
+  type: LeftoverType;
+  originalPath: string;
+  appName: string;
+  createdAt: string;
+  state: 'prepared' | 'backed-up' | 'completed' | 'failed' | 'restoring' | 'restored';
+  available?: boolean;
+  error?: string;
+}
+export interface BackupListResult { success: boolean; entries: BackupEntry[]; warnings: string[]; error?: string }
+export interface BackupRestoreResult { success: boolean; error?: string; message?: string }
 
 // Electron IPC Köprüsü (window.api) Arayüzü
 export interface ElectronAPI {
   isElectron: boolean;
+  reportRendererError: (report: RendererErrorReport) => Promise<{ success: boolean }>;
+  getProgramIcon: (appId: string, revision: string) => Promise<{ dataUrl?: string }>;
   getSystemInfo: () => Promise<SystemInfo>;
   getInstalledPrograms: () => Promise<InstalledProgramsResult>;
   uninstallProgram: (appId: string, options?: UninstallOptions) => Promise<UninstallResult>;
+  getUninstallActivity: () => Promise<UninstallActivity>;
+  cancelUninstallWait: (operationId: string) => Promise<{ success: boolean; error?: string }>;
   scanLeftovers: (appId: string, options?: LeftoverScanOptions) => Promise<LeftoverScanResult>;
   deleteLeftovers: (items: LeftoverItem[]) => Promise<LeftoverDeleteResult>;
   createRestorePoint: (description?: string) => Promise<RestorePointResult>;
   openLogFolder: () => Promise<{ success: boolean; path?: string; error?: string }>;
+  listBackups: () => Promise<BackupListResult>;
+  restoreBackup: (id: string) => Promise<BackupRestoreResult>;
 }
 
 declare global {

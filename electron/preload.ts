@@ -14,6 +14,12 @@ import type {
 
 const api: ElectronAPI = {
   isElectron: true,
+  listBackups: () => ipcRenderer.invoke('backups:list'),
+  restoreBackup: id => ipcRenderer.invoke('backups:restore', { id }),
+  reportRendererError: report => ipcRenderer.invoke('logs:renderer-error', report),
+  getProgramIcon: (appId, revision) => ipcRenderer.invoke('programs:get-icon', { appId, revision }),
+  getUninstallActivity: () => ipcRenderer.invoke('programs:get-uninstall-activity'),
+  cancelUninstallWait: operationId => ipcRenderer.invoke('programs:cancel-uninstall-wait', { operationId }),
 
   getSystemInfo: (): Promise<SystemInfo> => {
     return ipcRenderer.invoke('app:get-system-info');
@@ -32,7 +38,7 @@ const api: ElectronAPI = {
   },
 
   deleteLeftovers: (items: LeftoverItem[]): Promise<LeftoverDeleteResult> => {
-    return ipcRenderer.invoke('leftovers:delete', { items });
+    return ipcRenderer.invoke('leftovers:delete', { items: items.map(({ id }) => ({ id })) });
   },
 
   createRestorePoint: (description?: string): Promise<RestorePointResult> => {

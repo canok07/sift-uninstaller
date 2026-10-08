@@ -1,4 +1,12 @@
-import type { LeftoverDeleteResult, LeftoverScanResult } from '../types';
+import type { InstalledProgramsResult, LeftoverDeleteResult, LeftoverScanResult } from '../types';
+
+export function describeInventory(result: InstalledProgramsResult) {
+  const failures = result.sources?.filter(source => source.status === 'error') || [];
+  if (!result.success) return { status: 'error' as const, text: result.error || 'Program kaynakları okunamadı.' };
+  if (result.partial || failures.length || result.warnings?.length) return { status: 'warning' as const,
+    text: `${result.programs.length} program listelendi. ${failures.length ? 'Eksik tarama: ' + failures.map(source => source.id + ': ' + source.error).join(' | ') : result.partial ? 'Tarama eksik kaldı.' : 'Bazı ad/simge bilgileri okunamadı.'}` };
+  return { status: 'success' as const, text: `${result.programs.length} program listelendi; tüm tarama kaynakları kontrol edildi.` };
+}
 
 export function describeCleanup(result: LeftoverDeleteResult) {
   const deletedIds = result.results.filter((item) => item.success).map((item) => item.id);

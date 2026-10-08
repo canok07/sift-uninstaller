@@ -11,14 +11,18 @@ module.exports = {
   copyright: 'Copyright © 2026 Sift Uninstaller',
   directories: { output: 'release' },
   files: ['dist/**/*', 'dist-electron/**/*', 'package.json', 'LICENSE'],
+  extraResources: [{ from: 'build/icon.ico', to: 'icon.ico' }],
   buildVersion: windowsVersion,
   buildNumber: match[4],
   extraMetadata: { shortVersion: windowsVersion, shortVersionWindows: windowsVersion },
   win: {
+    icon: 'build/icon.ico',
     target: [{ target: 'nsis', arch: ['x64'] }],
     requestedExecutionLevel: 'requireAdministrator'
   },
   nsis: {
+    installerIcon: 'build/icon.ico',
+    uninstallerIcon: 'build/icon.ico',
     oneClick: false,
     perMachine: false,
     allowToChangeInstallationDirectory: true,

@@ -20,20 +20,33 @@ import {
   Loader2,
   ShieldAlert,
   Info,
-  FolderOpen
+  FolderOpen,
+  Clock3
 } from 'lucide-react';
 import { LeftoverCleanerModal } from './LeftoverCleanerModal';
-import { describeScan } from '../utils/operationResults';
+import { OperationHistoryModal } from './OperationHistoryModal';
+import { BackupRecoveryModal } from './BackupRecoveryModal';
+import { InventoryStatus } from './InventoryStatus';
+import { ProgramIcon } from './ProgramIcon';
+import { UninstallMonitor, CancelWaitModal } from './UninstallMonitor';
+import { makeErrorReport, reportRendererError } from '../utils/rendererErrors';
+import { appendHistory, readHistory, type HistoryStatus } from '../utils/operationHistory';
+import { describeScan, describeInventory } from '../utils/operationResults';
 import { APP_VERSION } from '../version';
+import { confirmRestoreFailure, describeUninstall, hasVerifiedRemoval } from '../utils/uninstallFlow';
+import { readSettings, saveSettings } from '../utils/settings';
 import type { 
   InstalledProgram, 
   SystemInfo, 
   LeftoverItem, 
-  RegistryHive 
+  RegistryHive,
+  InventorySource,
+  UninstallActivity
 } from '../types';
 
 export interface FluentAppItem {
   id: string;
+  revision?: string;
   name: string;
   iconBg: string;
   iconText: string;
@@ -228,6 +241,8 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   const [isElectronConnected, setIsElectronConnected] = useState(isElectronEnvironment);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [registryReadError, setRegistryReadError] = useState<string | null>(null);
+  const [inventorySources, setInventorySources] = useState<InventorySource[]>([]);
+  const [inventoryWarnings, setInventoryWarnings] = useState<string[]>([]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAppId, setSelectedAppId] = useState<string | null>(() => isElectronEnvironment ? null : 'demo-1');
@@ -241,7 +256,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   // Derin Temizlik State'leri (Alt Panel)
   const [isScanning, setIsScanning] = useState(false);
   const [progressValue, setProgressValue] = useState<number>(0);
-  const [panelStatus, setPanelStatus] = useState<string>('Hazır - Bir program seçip "Derin Temizlik" yapabilirsiniz.');
+  const [panelStatus, setPanelStatus] = useState<string>('Temizlik yalnızca kaldırıldığı doğrulanan program için açılır.');
   const [panelTitle, setPanelTitle] = useState<string>('Gelişmiş Temizleme Paneli');
   const [foundFilesCount, setFoundFilesCount] = useState<number>(0);
   const [foundRegCount, setFoundRegCount] = useState<number>(0);
@@ -255,12 +270,55 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
   // Aktif Kaldırma İşlemi (Satır kilidi ve asenkron takip)
   const [activeUninstallingAppId, setActiveUninstallingAppId] = useState<string | null>(null);
+  const [uninstallActivity, setUninstallActivity] = useState<UninstallActivity>({ active: false });
+  const [cancelWaitRequest, setCancelWaitRequest] = useState<Extract<UninstallActivity, { active: true }> | null>(null);
   const [notification, setNotification] = useState<{ text: string; type: 'info' | 'success' | 'process' | 'error' } | null>(null);
 
   // Modal Dialog State'leri
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isBackupRecoveryOpen, setIsBackupRecoveryOpen] = useState(false);
+  const [historyState, setHistoryState] = useState(() => {
+    try { return readHistory(window.localStorage); } catch { return readHistory(); }
+  });
+  const historyRef = useRef(historyState.entries);
+  const recordHistory = (operation: string, status: HistoryStatus, message: string, appName?: string, demo = !isElectronEnvironment) => {
+    if (!demo && status === 'error') reportRendererError(makeErrorReport('error', operation + ': ' + message));
+    let storage: Storage | undefined;
+    try { storage = window.localStorage; } catch { /* Keep a visible session-only fallback. */ }
+    const next = appendHistory(historyRef.current, { operation, status, message, appName, demo }, storage);
+    historyRef.current = next.entries;
+    if (isMountedRef.current) setHistoryState(next);
+  };
   const [confirmUninstallApp, setConfirmUninstallApp] = useState<FluentAppItem | null>(null);
+  const [lastRemovedApp, setLastRemovedApp] = useState<FluentAppItem | null>(null);
+  const [restoreFailure, setRestoreFailure] = useState<{ appName: string; error: string } | null>(null);
+  const [restoreWarning, setRestoreWarning] = useState<string | null>(null);
+  const restoreDecisionRef = useRef<((proceed: boolean) => void) | null>(null);
+  const operationRef = useRef(false);
+  const scanRef = useRef(false);
+  const isBusy = activeUninstallingAppId !== null || isScanning || isLoadingRegistry || uninstallActivity.active;
+
+  // Also recover monitoring after a renderer reload. Never cancel automatically
+  // on unmount: that would treat a UI failure as user consent.
+  useEffect(() => {
+    if (!isElectronEnvironment || !window.api?.getUninstallActivity) return;
+    let disposed = false, inFlight = false;
+    const refresh = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const activity = await window.api!.getUninstallActivity();
+        if (!disposed && isMountedRef.current) setUninstallActivity(activity);
+      } catch (error) {
+        if (!disposed) reportRendererError(makeErrorReport('error', error, 'Kaldırıcı durumu alınamadı.'));
+      } finally { inFlight = false; }
+    };
+    void refresh();
+    const interval = activeUninstallingAppId || uninstallActivity.active ? window.setInterval(() => void refresh(), 1000) : undefined;
+    return () => { disposed = true; if (interval !== undefined) window.clearInterval(interval); };
+  }, [isElectronEnvironment, activeUninstallingAppId, uninstallActivity.active]);
 
   // Dark Mode
   const [localDarkMode, setLocalDarkMode] = useState(isDarkMode);
@@ -279,10 +337,17 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   const dark = onToggleDarkMode ? isDarkMode : localDarkMode;
 
   // Ayarlar Seçenekleri
-  const [settingCreateRestorePoint, setSettingCreateRestorePoint] = useState(true);
-  const [settingScanRegistry, setSettingScanRegistry] = useState(true);
-  const [settingScanAppData, setSettingScanAppData] = useState(true);
-  const [settingSilentUninstall, setSettingSilentUninstall] = useState(false);
+  const [initialSettings] = useState(() => {
+    try { return readSettings(window.localStorage); } catch { return readSettings(); }
+  });
+  const [settingCreateRestorePoint, setSettingCreateRestorePoint] = useState(initialSettings.restorePoint);
+  const [settingScanRegistry, setSettingScanRegistry] = useState(initialSettings.scanRegistry);
+  const [settingScanAppData, setSettingScanAppData] = useState(initialSettings.scanAppData);
+  const [settingSilentUninstall, setSettingSilentUninstall] = useState(initialSettings.silent);
+  useEffect(() => {
+    try { saveSettings(window.localStorage, { restorePoint: settingCreateRestorePoint,
+      scanRegistry: settingScanRegistry, scanAppData: settingScanAppData, silent: settingSilentUninstall }); } catch { /* Storage unavailable. */ }
+  }, [settingCreateRestorePoint, settingScanRegistry, settingScanAppData, settingSilentUninstall]);
 
   // Sıralama (Sort)
   const [sortField, setSortField] = useState<'name' | 'size' | 'publisher' | 'installDate'>('name');
@@ -293,6 +358,8 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      restoreDecisionRef.current?.(false);
+      restoreDecisionRef.current = null;
       timeoutIdsRef.current.forEach((id) => window.clearTimeout(id));
       timeoutIdsRef.current = [];
     };
@@ -345,17 +412,29 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
   // Registry'den Program Listesini Okuma Fonksiyonu
   const fetchProgramsFromRegistry = async () => {
+    if (operationRef.current || uninstallActivity.active || isLeftoverModalOpen || confirmUninstallApp) return;
     if (!window.api || !window.api.isElectron || typeof window.api.getInstalledPrograms !== 'function') {
       return;
     }
 
+    operationRef.current = true;
+    setConfirmUninstallApp(null);
+    setLastRemovedApp(null);
+    setScannedLeftoverItems([]);
+    setCanClean(false);
     setIsLoadingRegistry(true);
     setRegistryReadError(null);
+    setInventorySources([]);
+    setInventoryWarnings([]);
     setNotification({ text: 'Windows Registry (HKLM, WOW6432Node, HKCU) taranıyor...', type: 'process' });
 
     try {
       const result = await window.api.getInstalledPrograms();
+      const inventorySummary = describeInventory(result);
+      recordHistory('Program listesini yenileme', inventorySummary.status, inventorySummary.text);
       if (!isMountedRef.current) return;
+      setInventorySources(result.sources || []);
+      setInventoryWarnings(result.warnings || []);
 
       if (result.success) {
         const iconColors = [
@@ -372,6 +451,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           const sizeInBytes = p.estimatedSize ? p.estimatedSize * 1024 : 0;
           return {
             id: p.id,
+            revision: p.revision,
             name: p.displayName,
             iconBg: iconColors[index % iconColors.length],
             iconText: firstLetter,
@@ -396,8 +476,8 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         }
 
         setNotification({ 
-          text: `Kayıt defterinden ${mapped.length} geçerli kurulu program yüklendi.`, 
-          type: 'success' 
+          text: inventorySummary.text,
+          type: inventorySummary.status === 'success' ? 'success' : 'info'
         });
         safeSetTimeout(() => setNotification(null), 3500);
       } else {
@@ -411,6 +491,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         });
       }
     } catch (err: unknown) {
+      recordHistory('Program listesini yenileme', 'error', err instanceof Error ? err.message : String(err));
       if (!isMountedRef.current) return;
       const msg = err instanceof Error ? err.message : String(err);
       setApps([]);
@@ -418,6 +499,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       setRegistryReadError(msg);
       setNotification({ text: `Hata: ${msg}`, type: 'error' });
     } finally {
+      operationRef.current = false;
       if (isMountedRef.current) {
         setIsLoadingRegistry(false);
       }
@@ -480,6 +562,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
   // Uygulamaları Yenile
   const handleReloadApps = async () => {
+    if (operationRef.current || uninstallActivity.active || isLeftoverModalOpen || confirmUninstallApp) return;
     if (isElectronEnvironment) {
       await fetchProgramsFromRegistry();
     } else {
@@ -496,7 +579,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
   // Kaldırma Onay Modalını Aç
   const promptUninstall = (app: FluentAppItem) => {
-    if (activeUninstallingAppId) {
+    if (operationRef.current || uninstallActivity.active || isLeftoverModalOpen) {
       setNotification({ 
         text: 'Zaten arka planda bir kaldırma işlemi yürütülüyor. Lütfen tamamlanmasını bekleyin.', 
         type: 'error' 
@@ -508,93 +591,88 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
   // GERÇEK KALDIRMA İŞLEMİ (Electron IPC)
   const executeUninstall = async (app: FluentAppItem) => {
+    if (operationRef.current || uninstallActivity.active || isLeftoverModalOpen) return;
+    operationRef.current = true;
     setConfirmUninstallApp(null);
     setActiveUninstallingAppId(app.id);
-
-    // 1. Geri yükleme noktası isteği varsa dene
-    if (settingCreateRestorePoint) {
-      if (isElectronEnvironment && window.api?.createRestorePoint) {
-        setNotification({ text: `'${app.name}' için Windows Sistem Geri Yükleme Noktası oluşturuluyor...`, type: 'process' });
-        try {
-          const rp = await window.api.createRestorePoint(`SiftUninstaller - ${app.name}`);
-          if (!rp.success) {
-            // Gerçeği bildir, sahte başarı üretme
-            setNotification({ 
-              text: `Geri yükleme noktası uyarısı: ${rp.error || 'Sistem Koruması devre dışı'}. Kaldırmaya devam ediliyor...`, 
-              type: 'info' 
-            });
-          }
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.warn('Restore point error:', msg);
+    setRestoreWarning(null);
+    try {
+      if (isElectronEnvironment && settingCreateRestorePoint) {
+        setNotification({ text: `'${app.name}' için geri yükleme noktası oluşturuluyor...`, type: 'process' });
+        const permission = await confirmRestoreFailure(
+          () => window.api?.createRestorePoint?.(`SiftUninstaller - ${app.name}`) ||
+            Promise.resolve({ success: false, supported: false, error: 'Geri yükleme hizmeti kullanılamıyor.' }),
+          error => new Promise<boolean>(resolve => {
+            restoreDecisionRef.current = resolve;
+            setRestoreFailure({ appName: app.name, error });
+          })
+        );
+        if (!isMountedRef.current) return;
+        if (!permission.proceed) {
+          recordHistory('Kaldırma', 'cancelled', `Hiçbir kaldırıcı başlatılmadı. ${permission.warning || ''}`, app.name);
+          setNotification({ text: 'Kaldırma iptal edildi. Hiçbir kaldırıcı başlatılmadı.', type: 'info' });
+          return;
+        }
+        if (permission.warning) {
+          recordHistory('Geri yükleme noktası', 'warning', `Oluşturulamadı; onayınızla devam edildi. ${permission.warning}`, app.name);
+          setRestoreWarning(`${app.name}: Geri yükleme noktası oluşturulamadı. Onayınızla devam edildi. ${permission.warning}`);
         }
       }
-    }
-
-    setNotification({
-      text: `'${app.name}' kaldırıcı süreci çalıştırıldı. Çıkış kodu bekleniyor...`,
-      type: 'process'
-    });
-
-    // 2. Gerçek Electron IPC üzerinden çalıştırma
-    if (isElectronEnvironment && window.api?.uninstallProgram) {
-      try {
-        const result = await window.api.uninstallProgram(app.id, { silent: settingSilentUninstall });
-
+      if (!isMountedRef.current) return;
+      setNotification({ text: `'${app.name}' kaldırılıyor; doğrulama bekleniyor...`, type: 'process' });
+      if (isElectronEnvironment) {
+        if (!window.api?.uninstallProgram) throw new Error('Kaldırma hizmeti kullanılamıyor.');
+        const result = await window.api.uninstallProgram(app.id, { silent: settingSilentUninstall, expectedRevision: app.revision });
+        const outcome = describeUninstall(result);
+        recordHistory('Kaldırma', outcome.status, outcome.text, app.name);
         if (!isMountedRef.current) return;
-        setActiveUninstallingAppId(null);
-
-        if (result.success && result.verified) {
-          // Başarılı: Listeden kaldır
-          setApps((prev) => prev.filter((a) => a.id !== app.id));
+        if (window.api.getUninstallActivity) {
+          try { const activity = await window.api.getUninstallActivity(); if (isMountedRef.current) setUninstallActivity(activity); }
+          catch (error) { reportRendererError(makeErrorReport('error', error)); }
+        }
+        if (result.cancelled || result.timedOut) {
+          setLastRemovedApp(null);
+          setCanClean(false);
+          setNotification({ text: outcome.text, type: 'info' });
+        } else if (hasVerifiedRemoval(result)) {
+          setApps(prev => prev.filter(a => a.id !== app.id));
           if (selectedAppId === app.id) setSelectedAppId(null);
-
-          setNotification({
-            text: `'${app.name}' kaldırıldığı doğrulandı. ${result.rebootRequired ? 'Windows yeniden başlatılmalı; temizlik yeniden başlatma sonrasına bırakıldı.' : 'Kalıntı taraması başlatılıyor...'}`,
-            type: 'success'
-          });
-
-          // Otomatik kalıntı taraması başlat
-          if (!result.rebootRequired) triggerDeepClean(app);
+          if (!result.rebootRequired) {
+            setLastRemovedApp(app);
+            await triggerDeepClean(app, true);
+          } else setNotification({ text: 'Kaldırma doğrulandı. Yeniden başlatma gerektiği için temizlik engellendi.', type: 'info' });
         } else if (result.rebootRequired && result.success) {
-          setNotification({ text: result.message || 'Windows yeniden başlatılmalı. Program listede tutuldu.', type: 'info' });
+          setNotification({ text: result.message || 'Windows yeniden başlatılmalı; program listede tutuldu.', type: 'info' });
         } else {
-          // Başarısız: Kesinlikle listeden SİLME, hata mesajını göster
-          setNotification({
-            text: `Kaldırma başarısız oldu: ${result.error || 'İşlem hatayla sonlandı'}. Program listede tutuldu.`,
-            type: 'error'
-          });
+          setNotification({ text: `Kaldırma başarısız: ${result.error || 'İşlem doğrulanamadı'}. Program listede tutuldu.`, type: 'error' });
         }
-      } catch (err: unknown) {
+      } else {
+        await new Promise(resolve => window.setTimeout(resolve, 400));
         if (!isMountedRef.current) return;
-        setActiveUninstallingAppId(null);
-        const msg = err instanceof Error ? err.message : String(err);
-        setNotification({
-          text: `Kaldırma sürecinde beklenmeyen hata: ${msg}`,
-          type: 'error'
-        });
+        recordHistory('Kaldırma', 'success', 'Demo kaydı arayüzden kaldırıldı; gerçek program kaldırılmadı.', app.name);
+        setApps(prev => prev.filter(a => a.id !== app.id));
+        setSelectedAppId(null);
+        setLastRemovedApp(app);
+        await triggerDeepClean(app, true);
       }
-    } else {
-      // Tarayıcı Önizleme / Demo Modu Simülasyonu
-      safeSetTimeout(() => {
-        if (!isMountedRef.current) return;
-        setActiveUninstallingAppId(null);
-        setApps((prev) => prev.filter((a) => a.id !== app.id));
-        if (selectedAppId === app.id) setSelectedAppId(null);
-        setNotification({
-          text: `[Demo Modu] '${app.name}' arayüzden kaldırıldı. Kalıntı taraması başlatılıyor...`,
-          type: 'success'
-        });
-        triggerDeepClean(app);
-      }, 1500);
+    } catch (error) {
+      recordHistory('Kaldırma', 'error', error instanceof Error ? error.message : String(error), app.name);
+      if (isMountedRef.current) setNotification({ text: `Kaldırma hatası: ${error instanceof Error ? error.message : String(error)}`, type: 'error' });
+    } finally {
+      operationRef.current = false;
+      if (isMountedRef.current) setActiveUninstallingAppId(null);
     }
   };
 
   // Gelişmiş Kalıntı Arama (Hem alt panel hem modal için)
-  const triggerDeepClean = async (targetApp: FluentAppItem) => {
+  const triggerDeepClean = async (targetApp: FluentAppItem, afterUninstall = false) => {
+    if (scanRef.current || (!afterUninstall && (operationRef.current || uninstallActivity.active || isLeftoverModalOpen))) return;
+    scanRef.current = true;
+    if (!afterUninstall) operationRef.current = true;
+    try {
     setIsScanning(true);
     setPanelTitle(`Gelişmiş Temizlik: '${targetApp.name}'`);
-    setPanelStatus('Doğrulanmış aday kalıntılar taranıyor (%AppData%, %LocalAppData%, C:\\ProgramData, Registry)...');
+    setPanelStatus('Kaldırma durumu ve ada dayalı temizlik adayları kontrol ediliyor...');
     setProgressValue(20);
     setCanClean(false);
     setFoundFilesCount(0);
@@ -609,7 +687,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           scanAppData: settingScanAppData,
           scanRegistry: settingScanRegistry
         });
-
+        recordHistory('Kalıntı taraması', scanRes.success && !scanRes.warnings?.length ? 'success' : 'error', describeScan(scanRes).text, targetApp.name);
         if (!isMountedRef.current) return;
 
         setProgressValue(scanRes.success ? 100 : 0);
@@ -635,6 +713,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           setNotification({ text: scanStatus.text, type: scanStatus.type });
         }
       } catch (err: unknown) {
+        recordHistory('Kalıntı taraması', 'error', err instanceof Error ? err.message : String(err), targetApp.name);
         if (!isMountedRef.current) return;
         setIsScanning(false);
         const msg = err instanceof Error ? err.message : String(err);
@@ -644,7 +723,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       }
     } else {
       // Demo ortamı için temsili güvenli örnekler (seçilmemiş olarak)
-      safeSetTimeout(() => {
+      await new Promise(resolve => window.setTimeout(resolve, 400));
         if (!isMountedRef.current) return;
         setProgressValue(100);
         setIsScanning(false);
@@ -679,19 +758,25 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         setFoundRegCount(1);
         setCanClean(true);
         setPanelStatus('2 dosya/klasör ve 1 kayıt defteri kalıntı adayı bulundu.');
+        recordHistory('Kalıntı taraması', 'success', 'Demo: 3 temsili aday gösterildi; gerçek dosya sistemi taranmadı.', targetApp.name);
         setScannedLeftoverItems(demoItems);
         setLeftoverTargetAppName(targetApp.name);
         setIsLeftoverModalOpen(true);
-      }, 700);
+    }
+    } finally {
+      scanRef.current = false;
+      if (!afterUninstall) operationRef.current = false;
+      if (isMountedRef.current) setIsScanning(false);
     }
   };
 
   // Alt Paneldeki "Kalıntıyı Temizle" Butonuna Basıldığında
   const handleOpenLeftoverModalFromPanel = () => {
+    if (operationRef.current || uninstallActivity.active) return;
     if (scannedLeftoverItems.length > 0) {
       setIsLeftoverModalOpen(true);
-    } else if (selectedApp) {
-      triggerDeepClean(selectedApp);
+    } else if (lastRemovedApp) {
+      triggerDeepClean(lastRemovedApp);
     }
   };
 
@@ -701,9 +786,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       {/* Windows 11 Pencere Çerçevesi Üst Başlık Çubuğu */}
       <div className="bg-white/95 dark:bg-[#16181C]/95 backdrop-blur px-4 py-2.5 flex items-center border-b border-slate-200 dark:border-zinc-800 select-none shrink-0 transition-colors duration-200">
         <div className="flex items-center space-x-2.5">
-          <div className="w-4 h-4 rounded-md bg-sky-500 flex items-center justify-center text-[10px] text-white font-bold shadow-sm">
-            U
-          </div>
+          <img src="./icon.svg" alt="" className="w-5 h-5 shrink-0" />
           <span className="text-xs font-semibold text-slate-800 dark:text-zinc-200 tracking-tight">
             Sift Uninstaller
           </span>
@@ -768,7 +851,13 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       )}
 
       {/* Ana Gövde */}
+      <UninstallMonitor activity={uninstallActivity} onStopWait={setCancelWaitRequest} />
+      {cancelWaitRequest && <CancelWaitModal activity={cancelWaitRequest} onClose={() => setCancelWaitRequest(null)} onConfirm={async () => {
+        if (!window.api?.cancelUninstallWait) return { success: false, error: 'Bekleme hizmeti kullanılamıyor.' };
+        return window.api.cancelUninstallWait(cancelWaitRequest.operationId);
+      }} />}
       <div className="p-5 sm:p-6 flex-1 flex flex-col space-y-4 overflow-hidden bg-slate-50/50 dark:bg-black">
+        {(inventorySources.length > 0 || inventoryWarnings.length > 0) && <div className="shrink-0 max-h-36 overflow-y-auto"><InventoryStatus sources={inventorySources} warnings={inventoryWarnings} /></div>}
         {/* ========================================================================= */}
         {/* 1. ÜST EYLEM ÇUBUĞU (ACTION BAR)                                         */}
         {/* ========================================================================= */}
@@ -784,7 +873,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                   setNotification({ text: 'Lütfen tablodan kaldırmak istediğiniz bir programı seçin.', type: 'error' });
                 }
               }}
-              disabled={activeUninstallingAppId !== null || !selectedApp}
+              disabled={isBusy || isLeftoverModalOpen || !selectedApp}
               className="px-5 py-2.5 rounded-xl font-semibold text-xs sm:text-sm bg-sky-100 hover:bg-sky-200 dark:bg-sky-950/60 dark:hover:bg-sky-900/60 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800/60 flex items-center gap-2 transition-all shadow-sm active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               title="Seçili programı güvenli şekilde kaldır"
             >
@@ -800,7 +889,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
             {/* "Uygulamalar" (Registry Yeniden Tara) butonu */}
             <button
               onClick={handleReloadApps}
-              disabled={isLoadingRegistry}
+              disabled={isBusy || isLeftoverModalOpen || confirmUninstallApp !== null}
               className="px-4 py-2.5 rounded-xl font-medium text-xs sm:text-sm text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/80 transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
               title="Registry'den kurulu programları yeniden tara ve yükle"
             >
@@ -811,16 +900,16 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
             {/* "Derin Temizlik" butonu */}
             <button
               onClick={() => {
-                const target = selectedApp || apps[0];
+                const target = lastRemovedApp;
                 if (target) {
                   triggerDeepClean(target);
                 } else {
-                  setNotification({ text: 'Temizlenecek bir program seçiniz.', type: 'error' });
+                  setNotification({ text: 'Önce programı kaldırın. Temizlik doğrulanmış kaldırma sonrasında açılır.', type: 'info' });
                 }
               }}
-              disabled={isScanning || apps.length === 0}
+              disabled={isBusy || isLeftoverModalOpen || confirmUninstallApp !== null || !lastRemovedApp}
               className="px-4 py-2.5 rounded-xl font-medium text-xs sm:text-sm text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/80 transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
-              title="Artık dosyaları ve kayıt defteri kalıntılarını tara"
+              title="Yalnızca bu oturumda kaldırıldığı doğrulanan son programın kalıntı adaylarını tara"
             >
               <Sparkles className="w-4 h-4 text-amber-500 dark:text-amber-400" />
               <span>Derin Temizlik</span>
@@ -829,6 +918,10 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
           {/* Sağ Taraf: Tema, Ayarlar ve Profil */}
           <div className="flex items-center gap-2 ml-auto">
+            <button type="button" onClick={() => setIsHistoryOpen(true)} aria-label="İşlem Geçmişi" title="İşlem Geçmişi"
+              className="w-9 h-9 rounded-full bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 flex items-center justify-center border border-slate-200 dark:border-zinc-700">
+              <Clock3 className="w-4 h-4" />
+            </button>
             {/* Gece/Gündüz Modu İkon Butonu */}
             <button
               onClick={handleToggleTheme}
@@ -1103,7 +1196,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                         <td className="py-3.5 px-5">
                           <div className="flex items-center gap-3">
                             <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0 ${app.iconBg}`}>
-                              {app.iconText}
+                              <ProgramIcon id={app.id} revision={app.revision} real={app.isReal} fallback={app.iconText} />
                             </div>
                             <div>
                               <div className="font-semibold text-slate-800 dark:text-zinc-100 flex items-center gap-2">
@@ -1161,7 +1254,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                                 e.stopPropagation();
                                 promptUninstall(app);
                               }}
-                              disabled={activeUninstallingAppId !== null}
+                              disabled={isBusy}
                               className="p-2 rounded-lg text-slate-400 dark:text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all opacity-70 group-hover:opacity-100 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                               title={`${app.name} uygulamasını kaldır`}
                             >
@@ -1207,7 +1300,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           {/* Sağ Kısım: "Kalıntıyı Temizle" Butonu */}
           <button
             onClick={handleOpenLeftoverModalFromPanel}
-            disabled={!canClean}
+            disabled={!canClean || isBusy || isLeftoverModalOpen}
             className={`w-full sm:w-auto px-6 py-2.5 font-semibold text-xs sm:text-sm rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 shrink-0 ${
               canClean
                 ? 'bg-sky-500 hover:bg-sky-600 active:bg-sky-700 text-white shadow-sky-500/20 cursor-pointer'
@@ -1249,6 +1342,30 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       {/* ========================================================================= */}
       {/* MODAL 1: KALDIRMA ONAY DİALOGU                                            */}
       {/* ========================================================================= */}
+      {restoreWarning && (
+        <div role="status" className="fixed bottom-16 left-6 right-6 z-40 rounded-xl border border-amber-500 bg-amber-50 dark:bg-amber-950 p-3 text-xs text-amber-900 dark:text-amber-100">
+          {restoreWarning}
+          <button aria-label="Geri yükleme uyarısını kapat" onClick={() => setRestoreWarning(null)} className="ml-3 underline">Kapat</button>
+        </div>
+      )}
+      {restoreFailure && (
+        <div role="dialog" aria-modal="true" aria-label="Geri yükleme noktası oluşturulamadı" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="max-w-md rounded-2xl bg-white dark:bg-zinc-900 p-5 space-y-4 text-sm">
+            <h3 className="font-bold">Geri yükleme noktası oluşturulamadı</h3>
+            <p>{restoreFailure.appName}</p>
+            <p className="break-words text-amber-700 dark:text-amber-300">{restoreFailure.error}</p>
+            <p>Kaldırıcı henüz başlatılmadı. Geri yükleme noktası olmadan devam etmek istiyor musunuz?</p>
+            <div className="flex gap-3 justify-end">
+              {[false, true].map(proceed => <button key={String(proceed)} className="rounded-lg border px-3 py-2" onClick={() => {
+                const decide = restoreDecisionRef.current;
+                restoreDecisionRef.current = null;
+                setRestoreFailure(null);
+                decide?.(proceed);
+              }}>{proceed ? 'Yedeksiz Devam Et' : 'Kaldırmayı İptal Et'}</button>)}
+            </div>
+          </div>
+        </div>
+      )}
       {confirmUninstallApp && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-[#16181C] rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-2xl max-w-md w-full p-5 space-y-4">
@@ -1323,6 +1440,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       {/* ========================================================================= */}
       {isLeftoverModalOpen && (
         <LeftoverCleanerModal
+          onResult={(status, message, demo) => recordHistory('Kalıntı temizliği', status, message, leftoverTargetAppName, demo)}
           appName={leftoverTargetAppName}
           initialItems={scannedLeftoverItems}
           scanWarning={scanWarning}
@@ -1410,6 +1528,14 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                 />
               </label>
 
+              <button type="button" onClick={() => { setIsSettingsOpen(false); setIsHistoryOpen(true); }}
+                className="w-full flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 text-sky-700 dark:text-sky-400 hover:bg-slate-50 dark:hover:bg-zinc-800">
+                <Clock3 className="w-4 h-4" /> İşlem Geçmişini Aç
+              </button>
+              <button type="button" disabled={isBusy || isLeftoverModalOpen} onClick={() => { setIsSettingsOpen(false); setIsBackupRecoveryOpen(true); }}
+                className="w-full flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 text-sky-700 dark:text-sky-400 disabled:opacity-40">
+                <RotateCw className="w-4 h-4" /> Temizlik Yedeklerini Geri Al
+              </button>
               <div className="flex items-center justify-between gap-4 p-3 rounded-xl border border-slate-200/80 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-900/50">
                 <div>
                   <div className="font-semibold text-slate-800 dark:text-zinc-100">İşlem Günlükleri</div>
@@ -1456,6 +1582,11 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       {/* ========================================================================= */}
       {/* MODAL 4: YÖNETİCİ PROFİLİ VE SİSTEM DURUMU MODALI                          */}
       {/* ========================================================================= */}
+      {isHistoryOpen && <OperationHistoryModal entries={historyState.entries} issue={historyState.issue} onClose={() => setIsHistoryOpen(false)} />}
+      {isBackupRecoveryOpen && <BackupRecoveryModal onClose={() => setIsBackupRecoveryOpen(false)} onResult={(success, message, app) => {
+        recordHistory('Temizlik geri alma', success ? 'success' : 'error', message, app);
+        if (success) { setCanClean(false); setLastRemovedApp(null); setScannedLeftoverItems([]); setPanelStatus('Temizlik izni sıfırlandı; yedek geri alındı.'); }
+      }} />}
       {isProfileOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-[#16181C] rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-2xl max-w-sm w-full p-5 space-y-4">

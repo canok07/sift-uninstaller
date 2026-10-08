@@ -11,7 +11,16 @@ export default defineConfig(() => {
     // Electron loadFile() ile açıldığında asset'lerin C:\\assets yerine
     // index.html'e göre çözülmesini sağlar.
     base: './',
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), {
+      name: 'packaged-csp',
+      apply: 'build',
+      transformIndexHtml(html) {
+        return html.replace("connect-src 'self' ws://127.0.0.1:3000 ws://localhost:3000", "connect-src 'none'");
+      }
+    }, {
+      name: 'trusted-loopback-development-csp', apply: 'serve',
+      transformIndexHtml(html) { return html.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'"); }
+    }],
     resolve: {
       alias: {
         '@': projectRoot,

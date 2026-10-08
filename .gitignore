@@ -6,6 +6,7 @@ release/
 .npm-cache/
 coverage/
 .test-build/
+WORKSPACE_STATUS.md
 .DS_Store
 *.log
 *.zip
