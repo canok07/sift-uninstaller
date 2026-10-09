@@ -6,11 +6,19 @@ A Windows desktop app for managing installed programs and reviewing leftover cle
 
 ## English
 
+### Download for Windows
+
+[Download the 0.5.1.13 setup EXE](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.13/Sift.Uninstaller-Setup-0.5.1.13.exe) · [Release details and SHA-256 checksum](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.13)
+
+For **Windows 10/11 x64**. Download and run the setup EXE, then launch Sift and approve the administrator prompt. **No Node.js, terminal commands or separate dependency installation are needed.** The EXE is a setup installer, not a portable single-file application.
+
+This is an **unsigned development release**. Windows may show an unknown-publisher or SmartScreen warning; do not bypass a warning for an unverified download. Use this repository's release assets and compare the EXE's SHA-256 with the supplied `SHA256SUMS-0.5.1.13.txt`. A matching checksum verifies the downloaded bytes, not publisher identity or safety. Real installer/UAC/upgrade and real uninstall tests are still pending; automated tests use isolated fixtures.
+
 ### About
 
 Sift Uninstaller brings desktop programs, Microsoft Store apps and Windows components into one interface. It uses Windows Registry and AppX information to list installed software, launches native uninstallers and offers a separate, user-reviewed cleanup step.
 
-The project is under active development in the **0.5 series**. The current source version is **0.5.1.12**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases). This is a development release, not a claim of production readiness.
+The project is under active development in the **0.5 series**. The current source version is **0.5.1.13**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases). Development prereleases may not appear at the generic “latest release” link; use the versioned download above. This is a development release, not a claim of production readiness.
 
 ### Features
 
@@ -34,7 +42,7 @@ The project is under active development in the **0.5 series**. The current sourc
 
 The desktop build targets **64-bit Windows 10 and Windows 11**. A packaged installation does not require Node.js.
 
-1. Download an available `Sift Uninstaller-Setup-<version>.exe` from [Releases](https://github.com/canok07/sift-uninstaller/releases) and run the installer.
+1. Download the setup EXE using the link above or the **Assets** section of the versioned release. GitHub's “Source code” ZIP is not the installer. Run the EXE.
 2. Launch Sift Uninstaller and approve the Windows administrator prompt. The packaged app requires administrator access.
 3. Select a category, find the program, and open the uninstall confirmation using the row's action or a double-click.
 4. After verified removal, review any cleanup candidates. Select only the items you recognize and want to delete.
@@ -99,11 +107,19 @@ Sift Uninstaller is licensed under the [MIT License](LICENSE). Existing file-spe
 
 ## Türkçe
 
+### Windows için indir
+
+[0.5.1.13 kurulum EXE'sini indir](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.13/Sift.Uninstaller-Setup-0.5.1.13.exe) · [Sürüm bilgileri ve SHA-256 dosya özeti](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.13)
+
+**Windows 10/11 x64** içindir. Kurulum EXE'sini indirip çalıştırın; ardından Sift'i açarak yönetici izni isteğini onaylayın. **Node.js, terminal komutu veya ayrıca bağımlılık kurulumu gerekmez.** EXE bir kurulum dosyasıdır; tek dosyalık taşınabilir uygulama değildir.
+
+Bu, **dijital imzası olmayan bir geliştirme sürümüdür**. Windows bilinmeyen yayıncı veya SmartScreen uyarısı gösterebilir; doğrulanmamış bir indirme için uyarıyı aşmayın. Bu deponun sürüm dosyalarını kullanın ve EXE'nin SHA-256 özetini beraberindeki `SHA256SUMS-0.5.1.13.txt` ile karşılaştırın. Eşleşme indirilen dosyanın bütünlüğünü doğrular; yayıncı kimliğini veya güvenliğini kanıtlamaz. Gerçek kurulum/UAC/yükseltme ve gerçek kaldırma testleri henüz yapılmadı; otomatik testler ayrı test verileri kullanır.
+
 ### Hakkında
 
 Sift Uninstaller; masaüstü programlarını, Microsoft Store uygulamalarını ve Windows bileşenlerini tek arayüzde yönetmenize yardımcı olan bir Windows masaüstü uygulamasıdır. Kurulu yazılımları Windows Registry ve AppX bilgilerinden listeler, yerel kaldırıcıları çalıştırır ve ayrı bir aşamada kullanıcı onaylı kalıntı temizliği sunar.
 
-Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel kaynak kod sürümü **0.5.1.12**'dir. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır. Bu bir geliştirme sürümüdür; üretim kullanımına hazır olduğu iddia edilmez.
+Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel kaynak kod sürümü **0.5.1.13**'tür. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır. Geliştirme sürümleri genel “latest release” bağlantısında görünmeyebilir; yukarıdaki sürüme özel indirme bağlantısını kullanın. Bu bir geliştirme sürümüdür; üretim kullanımına hazır olduğu iddia edilmez.
 
 ### Özellikler
 
@@ -127,7 +143,7 @@ Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel kaynak kod 
 
 Masaüstü sürümü **64 bit Windows 10 ve Windows 11** için hazırlanır. Paketlenmiş uygulamayı kullanmak için Node.js gerekmez.
 
-1. [Releases](https://github.com/canok07/sift-uninstaller/releases) sayfasından mevcut `Sift Uninstaller-Setup-<sürüm>.exe` dosyasını indirip kurulum sihirbazını çalıştırın.
+1. Yukarıdaki bağlantıdan veya sürüm sayfasındaki **Assets** bölümünden kurulum EXE'sini indirin. GitHub'ın “Source code” ZIP dosyası kurulum paketi değildir. EXE'yi çalıştırın.
 2. Sift Uninstaller'ı açıp Windows yönetici izni isteğini onaylayın. Paketlenmiş uygulama yönetici yetkisi gerektirir.
 3. İlgili sekmeden programı bulun. Satırdaki kaldırma eylemini kullanarak veya çift tıklayarak onay penceresini açın.
 4. Kaldırma doğrulandıktan sonra bulunan temizlik adaylarını inceleyin. Yalnızca tanıdığınız ve silmek istediğiniz öğeleri seçin.

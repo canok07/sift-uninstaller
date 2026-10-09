@@ -392,9 +392,9 @@ test('package, UI and builder describe the same Windows release', () => {
   const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
   assert.equal(require('semver').valid(manifest.version), manifest.version);
   assert.equal(manifest.version, lock.version);
-  assert.equal(APP_VERSION, '0.5.1.12');
+  assert.equal(APP_VERSION, '0.5.1.13');
   assert.equal(config.buildVersion, APP_VERSION);
-  assert.equal(config.buildNumber, '12');
+  assert.equal(config.buildNumber, '13');
   assert.equal(config.extraMetadata.shortVersionWindows, APP_VERSION);
   assert.ok(config.nsis.artifactName.includes('$' + '{buildVersion}'));
   assert.equal(manifest.license, 'MIT');

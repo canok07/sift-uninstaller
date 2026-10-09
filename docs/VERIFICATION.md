@@ -2,9 +2,10 @@
 
 ## English
 
-Source version: **0.5.1.12**. Verified locally on Windows on 2026-10-08.
+Source version: **0.5.1.13**. Documentation/packaging update; behavior unchanged from 0.5.1.12. Regression/type checks repeated locally on Windows on 2026-10-09. The 0.5.1.12 source and packaged Electron checks passed on 2026-10-08; see the additional 0.5.1.13 package check recorded below.
 
 - TypeScript and renderer/main builds passed.
+- The 0.5.1.13 NSIS package was rebuilt on 2026-10-09 and its packaged-ASAR Electron check passed: sandbox/CSP, themes, diagnostics, confirmations/cancellation and fixture-only recovery. The EXE is unsigned; its SHA-256 is published alongside the release asset. Installer execution/live UAC were not tested.
 - 59 regression tests cover identity/revisions, input/sender rejection, operation locks, cancellation races, incomplete inventories, diagnostics/history, cleanup scope/link checks, scan-time changes, backup integrity, interrupted journals, and existing/reinstalled target protection.
 - Hidden Electron integration uses the production renderer/preload/main with a sandbox, isolated profiles, read-only Windows inventory and substituted harmless uninstall processes. CSP blocks inline scripts; popups are denied. It checks themes, icons, logging, confirmation/cancellation, renderer reload and a fixture-only recovery round trip.
 - Automated regression Registry mutations are mocks. Electron recovery writes only test-owned fixture files. No installed user program is removed and no user data is cleaned.
@@ -18,9 +19,10 @@ Reference: [Electron security checklist](https://www.electronjs.org/docs/latest/
 
 ## Türkçe
 
-Kaynak sürümü: **0.5.1.12**. 2026-10-08 tarihinde Windows'ta yerel doğrulama yapıldı.
+Kaynak sürümü: **0.5.1.13**. Belge/paketleme güncellemesidir; davranış 0.5.1.12 ile aynıdır. Regresyon/tip denetimleri 2026-10-09 tarihinde Windows'ta tekrarlandı. 0.5.1.12 kaynak ve paket Electron kontrolleri 2026-10-08 tarihinde geçti; ek 0.5.1.13 paket kontrolü aşağıda belirtilir.
 
 - TypeScript ve arayüz/ana süreç derlemeleri geçti.
+- 0.5.1.13 NSIS paketi 2026-10-09 tarihinde yeniden üretildi ve paket içindeki ASAR ile Electron kontrolü geçti: sandbox/CSP, temalar, günlükler, onay/iptal ve yalnızca test verisiyle geri alma. EXE imzasızdır; SHA-256 özeti sürüm dosyasıyla birlikte yayımlanır. Gerçek kurulum/canlı UAC denenmedi.
 - 59 regresyon testi; kimlik/sürüm, girdi/gönderen denetimi, kilitler, iptal zamanlamaları, eksik tarama, günlük/geçmiş, temizlik kapsamı/bağlantı denetimleri, tarama sonrası değişiklik, yedek bütünlüğü, kesintili kayıtlar ve mevcut/yeniden kurulu hedef korumasını kapsar.
 - Gizli Electron testi; gerçek arayüz/köprü/ana süreç, sandbox, ayrı profiller, salt okunur Windows listesi ve zararsız test kaldırıcı süreçleri kullanır. CSP satır içi betiği engeller, yeni pencere reddedilir. Tema, simge, günlük, onay/iptal, arayüz yeniden yükleme ve yalnızca test dosyalarıyla geri alma kontrol edilir.
 - Regresyon testlerindeki Registry değişiklikleri taklittir. Electron geri alma yalnızca testin kendi dosyalarına yazar. Kullanıcının kurulu programı kaldırılmaz ve gerçek verileri temizlenmez.
