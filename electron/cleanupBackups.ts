@@ -85,10 +85,38 @@ export class CleanupBackups {
       try {
         const record = this.read(id);
         const { program: _program, digest: _digest, version: _version, ...entry } = record;
-        entries.push({ ...entry, available: Boolean(record.digest) && fs.existsSync(this.payload(record)) && record.state !== 'restored' });
+        const directory = this.directory(id);
+        let sizeBytes: number | undefined, deleteToken: string | undefined;
+        try {
+          sizeBytes = this.size(directory);
+          deleteToken = treeFingerprint(directory);
+        } catch { warnings.push(id + ': yedek boyutu/güvenliği doğrulanamadı; silme engellendi.'); }
+        entries.push({ ...entry, sizeBytes, deleteToken, available: Boolean(record.digest) && fs.existsSync(this.payload(record)) && record.state !== 'restored' });
       } catch { warnings.push(id + ': yedek kaydı okunamadı; dosyalar korunuyor.'); }
     }
     return { entries: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), warnings };
+  }
+  private size(directory: string): number {
+    let entries = 0, total = 0;
+    const walk = (file: string, depth: number) => {
+      if (++entries > 10000 || depth > 32) throw new Error('Yedek inceleme sınırını aşıyor.');
+      const stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink()) throw new Error('Yedek bağlantı içeriyor.');
+      if (stat.isDirectory()) for (const name of fs.readdirSync(file)) walk(path.join(file, name), depth + 1);
+      else if (stat.isFile()) total += stat.size;
+      else throw new Error('Yedek türü desteklenmiyor.');
+    };
+    walk(directory, 0); return total;
+  }
+  delete(id: string, token: string) {
+    if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Yedek silme onayı geçersiz.');
+    const record = this.read(id);
+    if (!['completed', 'restored'].includes(record.state)) throw new Error('Kesintili, başarısız veya devam eden yedek silinemez; önce inceleyin.');
+    const directory = this.directory(id);
+    // Only this UUID child of the backup root; never the original/restored path.
+    if (path.dirname(path.resolve(directory)) !== path.resolve(this.root) || treeFingerprint(directory) !== token) throw new Error('Yedek değişti; listeyi yenileyip yeniden onaylayın.');
+    noLinks(directory);
+    fs.rmSync(directory, { recursive: true });
   }
   verify(record: BackupRecord) {
     if (!record.digest) throw new Error('Yedeğin tamamlandığı doğrulanamıyor; otomatik geri alma engellendi.');

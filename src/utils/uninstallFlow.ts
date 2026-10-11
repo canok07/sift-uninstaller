@@ -1,5 +1,13 @@
 import type { RestorePointResult, UninstallResult } from '../types';
 
+export type UninstallStage = 'preparing' | 'restore-point' | 'awaiting-confirmation' | 'uninstall';
+export function uninstallStageLabel(stage: UninstallStage | null): string {
+  if (stage === 'restore-point') return 'Geri yükleme bekleniyor...';
+  if (stage === 'awaiting-confirmation') return 'Onay bekleniyor...';
+  if (stage === 'preparing') return 'Hazırlanıyor...';
+  return 'Kaldırılıyor...';
+}
+
 export function hasVerifiedRemoval(result: UninstallResult): boolean {
   return Boolean(result.success && result.verified && !result.cancelled && !result.timedOut && !result.backgroundPending);
 }

@@ -9,7 +9,12 @@ const { promisify } = require('node:util');
 
 const root = path.resolve(__dirname, '..');
 const packagedAssets = process.env.SIFT_SMOKE_PACKAGED === '1';
-const assetRoot = packagedAssets ? path.join(root, 'release/win-unpacked/resources/app.asar') : root;
+// A versioned build avoids overwriting the user's currently open older package.
+const packageDir = path.resolve(root, 'release', process.env.SIFT_SMOKE_PACKAGE_SUBDIR || 'win-unpacked');
+const packageRelative = path.relative(path.join(root, 'release'), packageDir);
+if (packageRelative.startsWith('..') || path.isAbsolute(packageRelative)) throw new Error('Test package must stay under release');
+const packageResources = path.join(packageDir, 'resources');
+const assetRoot = packagedAssets ? path.join(packageResources, 'app.asar') : root;
 const output = path.join(root, '.test-build');
 fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, 'electron-smoke-'));
@@ -17,6 +22,7 @@ app.setPath('userData', profile);
 app.disableHardwareAcceleration();
 let win, startup, latestInventory, latestFrame;
 let fixtureLauncher, fixtureStarts = 0, closePrompts = 0;
+let restoreCalls = 0, finishRestore;
 const releaseFixture = path.join(profile, 'release-fixture');
 const fixtureRoaming = fs.mkdtempSync(path.join(output, 'electron-smoke-roaming-'));
 class HiddenWindow extends BrowserWindow {
@@ -32,8 +38,14 @@ safeExecFile[promisify.custom] = async (file, args, options) => {
   assert.equal(file, 'powershell.exe');
   const script = Buffer.from(args.at(-1), 'base64').toString('utf16le');
   if (script.includes('WindowsIdentity')) return { stdout: 'True', stderr: '' }; // fixture elevation; never trigger a live UAC prompt
+  if (script.includes('Checkpoint-Computer')) {
+    assert.equal(options.timeout, undefined); // never kill a System Restore transaction
+    restoreCalls++;
+    if (restoreCalls === 1) return new Promise(resolve => { finishRestore = () => resolve({ stdout: '', stderr: '' }); });
+    throw new Error('SIFT_SMOKE_RESTORE_FAILURE'); // substituted Windows result, never execute Checkpoint-Computer
+  }
   assert.ok(!/Remove-AppxPackage|Remove-Item|Checkpoint-Computer|Start-Process|reg\.exe/.test(script));
-  assert.ok(script.includes('$hives') || script.includes("'INSTALLED'"));
+  assert.ok(script.includes('$hives') || script.includes("'INSTALLED'") || script.includes('$siftProcess=Get-Process -Id'));
   return promisify(child.execFile)(file, args, { ...options, timeout: 30000 });
 };
 const wrappedElectron = {
@@ -43,8 +55,7 @@ const wrappedElectron = {
     getFileIcon: (...args) => app.getFileIcon(...args),
     whenReady: () => ({ then(callback) { startup = app.whenReady().then(callback); } }) },
   ipcMain: { handle(channel, handler) { ipcMain.handle(channel, async (...args) => {
-    // Restore-point behavior is a fixture too; never change Windows protection.
-    if (channel === 'system:create-restore-point') return { success: false, supported: false, error: 'SIFT_SMOKE_RESTORE_FAILURE' };
+    // Real restore handler with substituted Windows work and an accelerated wait deadline.
     const result = await handler(...args);
     if (channel === 'programs:get-installed') latestInventory = result;
     return result;
@@ -68,8 +79,8 @@ function fixtureSpawn(_command, argsOrOptions, options) {
 const moduleObject = { exports: {} };
 vm.runInNewContext(fs.readFileSync(path.join(assetRoot, 'dist-electron/main.cjs'), 'utf8'), {
   module: moduleObject, exports: moduleObject.exports, __dirname: path.join(assetRoot, 'dist-electron'),
-  Buffer, console, setTimeout, clearTimeout, URL,
-  process: { ...process, resourcesPath: path.join(root, 'release/win-unpacked/resources'), env: { ...process.env, APPDATA: fixtureRoaming, SIFT_DEV_SERVER: '1' }, on() {} },
+  Buffer, console, setTimeout: (callback, ms, ...args) => setTimeout(callback, ms === 60000 ? 500 : ms, ...args), clearTimeout, URL,
+  process: { ...process, resourcesPath: packageResources, env: { ...process.env, APPDATA: fixtureRoaming, SIFT_DEV_SERVER: '1' }, on() {} },
   require: name => name === 'electron' ? wrappedElectron : name === 'node:child_process'
     ? { execFile: safeExecFile, spawn: fixtureSpawn } : require(name)
 });
@@ -110,8 +121,43 @@ function paintedBackground(dark) {
   await waitFor(() => win.webContents.executeJavaScript("Array.from(document.querySelectorAll('td img')).filter(i => i.complete && i.naturalWidth > 0).length"), 'program icons');
   await new Promise(resolve => setTimeout(resolve, 2000));
   const iconCount = await win.webContents.executeJavaScript("Array.from(document.querySelectorAll('td img')).filter(i => i.complete && i.naturalWidth > 0).length");
-  const text = await win.webContents.executeJavaScript('document.body.innerText');
+  const text = await win.webContents.executeJavaScript('document.querySelector(\'aside[aria-label="Tarama kaynakları"]\').textContent');
   assert.ok(text.includes('HKLM') && text.includes('Store / AppX'));
+  const initialSize = win.getContentSize();
+  const measureCompactLayout = () => win.webContents.executeJavaScript(`(() => {
+    const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return {top:r.top,bottom:r.bottom,height:r.height,width:r.width}; };
+    return {header:box('[data-testid="workspace-header"]'),toolbar:box('[data-testid="compact-toolbar"]'),controls:box('[data-testid="inventory-controls"]'),table:box('[data-testid="program-table"]'),
+      sourcesCollapsed: !document.querySelector('aside[aria-label="Tarama kaynakları"] details').open,
+      horizontalOverflow:document.documentElement.scrollWidth > innerWidth};
+  })()`);
+  const compactWide = await measureCompactLayout();
+  assert.equal(compactWide.sourcesCollapsed, true);
+  assert.equal(compactWide.horizontalOverflow, false);
+  assert.ok(compactWide.toolbar.height <= 40 && compactWide.controls.height <= 40);
+  assert.ok(compactWide.table.top < 190 && compactWide.table.height > 200);
+  await win.webContents.executeJavaScript("document.querySelector('aside[aria-label=\"Tarama kaynakları\"] > details > summary').click()");
+  const sourcePopup = await win.webContents.executeJavaScript(`(() => {
+    const aside = document.querySelector('aside[aria-label="Tarama kaynakları"]');
+    const panel = aside.querySelector('details > div'), rect = panel.getBoundingClientRect();
+    const points = [[rect.left + 8,rect.top + 8],[rect.right - 8,rect.top + 8],[rect.left + 8,rect.bottom - 8],[rect.right - 8,rect.bottom - 8],[(rect.left + rect.right)/2,(rect.top + rect.bottom)/2]];
+    return {open:aside.querySelector('details').open, visible:points.every(([x,y]) => panel.contains(document.elementFromPoint(x,y))),
+      inBounds:rect.left >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight};
+  })()`);
+  assert.equal(sourcePopup.open, true); assert.equal(sourcePopup.visible, true); assert.equal(sourcePopup.inBounds, true);
+  assert.equal((await measureCompactLayout()).table.top, compactWide.table.top, 'source details must not push the program list down');
+  await new Promise(resolve => setTimeout(resolve, 200));
+  if (latestFrame) fs.writeFileSync(path.join(output, 'compact-sources-preview.png'), latestFrame.toPNG());
+  await win.webContents.executeJavaScript("document.querySelector('aside[aria-label=\"Tarama kaynakları\"] > details > summary').click()");
+  win.setContentSize(960, 640);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const compactNarrow = await measureCompactLayout();
+  assert.equal(compactNarrow.horizontalOverflow, false);
+  assert.ok(compactNarrow.toolbar.height <= 40);
+  assert.ok(compactNarrow.controls.height <= 90);
+  assert.ok(compactNarrow.table.height > 100);
+  if (latestFrame) fs.writeFileSync(path.join(output, 'compact-preview-narrow.png'), latestFrame.toPNG());
+  win.setContentSize(...initialSize);
+  await new Promise(resolve => setTimeout(resolve, 300));
   await win.webContents.executeJavaScript("console.error('SIFT_SMOKE_CONSOLE_ERROR'); setTimeout(() => { throw new Error('SIFT_SMOKE_GLOBAL_ERROR'); }, 0); void window.api.reportRendererError({kind:'react',message:'SIFT_SMOKE_REACT_REPORT'})");
   const log = path.join(profile, 'logs', 'sift-uninstaller.log');
   await waitFor(() => fs.existsSync(log) && fs.readFileSync(log, 'utf8').includes('SIFT_SMOKE_GLOBAL_ERROR'), 'persisted global error');
@@ -124,11 +170,13 @@ function paintedBackground(dark) {
   assert.equal(afterColor, beforeTheme ? 'rgb(241, 245, 249)' : 'rgb(0, 0, 0)');
   win.webContents.invalidate();
   await waitFor(() => paintedBackground(!beforeTheme), 'painted theme');
+  await new Promise(resolve => setTimeout(resolve, 350));
   fs.writeFileSync(path.join(output, beforeTheme ? 'medium-preview-light.png' : 'medium-preview-dark.png'), latestFrame.toPNG());
   await win.webContents.executeJavaScript("Array.from(document.querySelectorAll('button')).find(b => b.title.includes('Moda Geç') || b.title.includes('Moduna Geç')).click()");
   await waitFor(() => win.webContents.executeJavaScript("document.documentElement.classList.contains('dark') === " + beforeTheme), 'theme restore');
   win.webContents.invalidate();
   await waitFor(() => paintedBackground(beforeTheme), 'painted restored theme');
+  await new Promise(resolve => setTimeout(resolve, 350));
   fs.writeFileSync(path.join(output, 'medium-preview.png'), latestFrame.toPNG());
 
   const click = label => win.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === ${JSON.stringify(label)}).click()`);
@@ -146,10 +194,17 @@ function paintedBackground(dark) {
   await click('Vazgeç');
   await waitFor(async () => !(await hasText('Kaldırıcıyı Başlat')), 'confirmation dismissed');
   await openConfirm(); await click('Kaldırıcıyı Başlat');
-  await waitFor(() => hasText('SIFT_SMOKE_RESTORE_FAILURE'), 'restore-point failure confirmation');
+  await waitFor(() => hasText('Geri yükleme bekleniyor...'), 'accurate restore-point row phase');
+  await waitFor(() => hasText('60 saniye içinde geri yükleme sonucu alınamadı'), 'restore-point deadline confirmation');
+  assert.equal(fixtureStarts, 0);
+  assert.ok(await hasText('Onay bekleniyor...'));
+  if (latestFrame) fs.writeFileSync(path.join(output, 'restore-point-timeout.png'), latestFrame.toPNG());
   await click('Kaldırmayı İptal Et');
   await waitFor(() => hasText('Hiçbir kaldırıcı başlatılmadı.'), 'restore-point cancellation');
   assert.equal(fixtureStarts, 0);
+  finishRestore();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(fixtureStarts, 0, 'late checkpoint completion cannot start an uninstaller');
   await openConfirm(); await click('Kaldırıcıyı Başlat');
   await waitFor(() => hasText('SIFT_SMOKE_RESTORE_FAILURE'), 'second restore-point confirmation');
   await click('Yedeksiz Devam Et');
@@ -213,17 +268,52 @@ function paintedBackground(dark) {
   await waitFor(() => hasText('Özgün hedef geri alındı.'), 'fixture restore result');
   assert.equal(fs.readFileSync(path.join(fixtureTarget, 'data.txt'), 'utf8'), 'recover this');
   assert.equal(fs.existsSync(path.join(fixtureBackup, 'payload', 'data.txt')), true);
+  await waitFor(() => hasText('Gösterilen yedeklerin bilinen toplam boyutu:'), 'backup size shown');
+  win.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 300));
+  if (latestFrame) fs.writeFileSync(path.join(output, 'backup-management-preview.png'), latestFrame.toPNG());
+  await click('Yedeği Sil'); await waitFor(() => hasText('Onayla ve Yedeği Kalıcı Sil'), 'backup deletion confirmation');
+  win.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 300));
+  if (latestFrame) fs.writeFileSync(path.join(output, 'backup-delete-confirmation.png'), latestFrame.toPNG());
+  await click('Vazgeç'); assert.equal(fs.existsSync(fixtureBackup), true);
+  await click('Yedeği Sil'); await click('Onayla ve Yedeği Kalıcı Sil');
+  await waitFor(() => hasText('Yalnızca seçilen yedek kalıcı silindi'), 'backup deletion result');
+  assert.equal(fs.existsSync(fixtureBackup), false);
+  assert.equal(fs.readFileSync(path.join(fixtureTarget, 'data.txt'), 'utf8'), 'recover this');
   win.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 300));
   if (latestFrame) fs.writeFileSync(path.join(output, 'recovery-preview.png'), latestFrame.toPNG());
   await win.webContents.executeJavaScript("document.querySelector('[aria-labelledby=\"backup-title\"] button').click()");
+  // Render the actual cleanup component with display-only fixture records.
+  // Never click selection/deletion or generate real-user candidates.
+  const preview = require('esbuild').buildSync({ entryPoints: [path.join(root, 'tests/fixtures/leftover-preview.tsx')],
+    bundle: true, platform: 'browser', format: 'iife', globalName: 'SiftCandidatePreview',
+    define: { 'process.env.NODE_ENV': '"production"' }, write: false, logLevel: 'silent' }).outputFiles[0].text;
+  await win.webContents.executeJavaScript(preview + '\nSiftCandidatePreview.mountCandidatePreview();');
+  await waitFor(() => hasText('Bulunma gerekçesi:'), 'candidate explanation visual fixture');
+  const candidateDetails = await win.webContents.executeJavaScript(`(() => {
+    const dialog = document.querySelector('#candidate-preview [role="dialog"]');
+    const text = dialog.innerText;
+    const deleteButton = Array.from(dialog.querySelectorAll('button')).find(b => b.textContent.includes('Seçili Kalıntıları Sil'));
+    return {text, deleteDisabled:deleteButton.disabled, horizontalOverflow:dialog.scrollWidth > dialog.clientWidth};
+  })()`);
+  assert.ok(candidateDetails.text.includes('1.00 KB') && candidateDetails.text.includes('3 dosya'));
+  assert.ok(candidateDetails.text.includes('Registry boyutu ölçülmedi'));
+  assert.ok(candidateDetails.text.includes('kesin sahiplik kanıtı değildir'));
+  assert.ok(candidateDetails.text.includes('ExampleVendor'));
+  assert.equal(candidateDetails.deleteDisabled, true);
+  assert.equal(candidateDetails.horizontalOverflow, false);
+  win.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 350));
+  if (latestFrame) fs.writeFileSync(path.join(output, 'candidate-details-preview.png'), latestFrame.toPNG());
+  await win.webContents.executeJavaScript("document.querySelector('#candidate-preview button[title=\"Kapat\"]').click()");
   const proof = { version: require('../package.json').version, packagedAssets, sources: inventory.sources,
+    compactWide, compactNarrow, sourcePopup,
+    candidateExplanationVisualFixturePassed: true,
     programCount: inventory.programs.length, realIconCount: iconCount,
     friendlyStoreNames: inventory.programs.filter(p => p.category === 'store' && p.displayName !== p.packageName).length,
     metadataWarnings: inventory.warnings.length, globalErrorPersisted: true, rendererReportPersisted: true, consoleErrorPersisted: true, themeTogglePassed: true,
     doubleClickConfirmationPassed: true, restoreFailureCancelPassed: true,
     cancellationConfirmationPassed: true, backgroundGatePassed: true, closeWarningLogicPassed: true,
     rendererReloadPreservesTracking: true, harmlessFixtureStarts: fixtureStarts,
-    sandboxEnabled: true, inlineScriptBlocked: true, popupBlocked: true, recoveryEmptyStatePassed: true, recoveryFixtureRoundTripPassed: true,
+    sandboxEnabled: true, inlineScriptBlocked: true, popupBlocked: true, recoveryEmptyStatePassed: true, recoveryFixtureRoundTripPassed: true, backupDeletionConfirmationPassed: true,
     realUninstallersRun: false, realUserCleanupRun: false, installerUACTested: false };
   fs.writeFileSync(path.join(output, 'medium-smoke.json'), JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof));

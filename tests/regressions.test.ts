@@ -14,7 +14,9 @@ import { describeCleanup, describeScan } from '../src/utils/operationResults';
 import { APP_VERSION } from '../src/version';
 import { getProgramId, getProgramRevision } from '../electron/programIdentity';
 import { OperationLock } from '../electron/operationLock';
-import { confirmRestoreFailure, hasVerifiedRemoval, describeUninstall } from '../src/utils/uninstallFlow';
+import { confirmRestoreFailure, hasVerifiedRemoval, describeUninstall, uninstallStageLabel } from '../src/utils/uninstallFlow';
+import { RestorePointWait } from '../electron/restorePointWait';
+import { RESTORE_POINT_WAIT_MS } from '../src/operationLimits';
 import { UninstallTask, UNINSTALL_TIMEOUT_MS } from '../electron/uninstallTask';
 import { UninstallMonitor, CancelWaitModal } from '../src/components/UninstallMonitor';
 import { readSettings, saveSettings, defaultSettings } from '../src/utils/settings';
@@ -32,8 +34,14 @@ import { validIPC } from '../electron/ipcSafety';
 import { secureWindow } from '../electron/windowSafety';
 import { parseUninstallCommand } from '../electron/uninstallCommand';
 import { CleanupBackups, validateRegBackup } from '../electron/cleanupBackups';
-import { treeFingerprint } from '../electron/cleanupSafety';
+import { treeFingerprint, inspectCleanupTree } from '../electron/cleanupSafety';
+import { UninstallJournal } from '../electron/uninstallJournal';
+import { cleanupConflict, leftoverEvidence } from '../electron/cleanupOwnership';
+import { formatBackupSize } from '../src/components/BackupRecoveryModal';
 import { describeInventory } from '../src/utils/operationResults';
+import { inventoryCounts } from '../src/utils/inventoryCounts';
+import { cleanupBackupIds, selectBackupEntries } from '../src/utils/backupSelection';
+import { LeftoverCandidateDetails, leftoverSizeLabel } from '../src/components/LeftoverCandidateDetails';
 import type { LeftoverItem, LeftoverDeleteResult } from '../src/types';
 
 const fixtureParent = path.resolve('.test-build');
@@ -42,6 +50,74 @@ const fixtureRoot = fs.mkdtempSync(path.join(fixtureParent, 'safety-'));
 after(() => {
   assert.equal(path.dirname(fixtureRoot), fixtureParent);
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
+});
+
+test('restore-point deadline does not kill or restart an unresolved Windows job', async () => {
+  assert.equal(RESTORE_POINT_WAIT_MS, 60_000);
+  const wait = new RestorePointWait(8);
+  let finish!: (result: any) => void, starts = 0;
+  const work = () => { starts++; return new Promise<any>(resolve => { finish = resolve; }); };
+  const result = await wait.run(work);
+  assert.equal(result.success, false); assert.equal(result.timedOut, true);
+  assert.equal(result.backgroundPending, true); assert.match(result.error!, /zorla durdurulmadı/);
+  const repeated = await wait.run(work);
+  assert.equal(repeated.success, false); assert.equal(repeated.backgroundPending, true);
+  assert.equal(starts, 1);
+  finish({ success: true, supported: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(result.success, false, 'late success cannot rewrite the already returned timeout');
+  assert.equal((await wait.run(async () => ({ success: true, supported: true }))).success, true);
+});
+
+test('restore-point success, failure and late rejection clear timers without unhandled errors', async () => {
+  const wait = new RestorePointWait(8);
+  assert.equal((await wait.run(async () => ({ success: true, supported: true }))).success, true);
+  const failure = await wait.run(async () => { throw new Error('checkpoint denied'); });
+  assert.equal(failure.success, false); assert.match(failure.error!, /checkpoint denied/);
+  let reject!: (error: Error) => void;
+  assert.equal((await wait.run(() => new Promise((_resolve, fail) => { reject = fail; }))).timedOut, true);
+  reject(new Error('late failure'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await wait.run(async () => ({ success: true, supported: true }))).success, true);
+});
+
+test('restore-point timeout requires a decision; cancellation and late completion cannot start uninstall', async () => {
+  let complete!: (result: any) => void, decisions = 0, launches = 0;
+  const wait = new RestorePointWait(8);
+  const permission = await confirmRestoreFailure(
+    () => wait.run(() => new Promise(resolve => { complete = resolve; })),
+    async warning => { decisions++; assert.match(warning, /hazır kabul edilemez/); return false; }
+  );
+  if (permission.proceed) launches++;
+  complete({ success: true, supported: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(decisions, 1); assert.equal(launches, 0);
+  assert.equal((await confirmRestoreFailure(async () => ({ success: false, supported: true, timedOut: true, error: 'timeout' }), async () => true)).proceed, true);
+  assert.equal(uninstallStageLabel('restore-point'), 'Geri yükleme bekleniyor...');
+  assert.equal(uninstallStageLabel('awaiting-confirmation'), 'Onay bekleniyor...');
+  assert.equal(uninstallStageLabel('uninstall'), 'Kaldırılıyor...');
+});
+
+test('real main restore handler releases UI lock after deadline, logs and rejects duplicate work', async () => {
+  let finish!: (value: string) => void, checkpointCalls = 0;
+  const sandbox = createMainSandbox(path.join(fixtureRoot, 'restore-deadline'), script => {
+    if (script.includes('Checkpoint-Computer')) {
+      checkpointCalls++; assert.match(script, /\$WarningPreference = 'Stop'/);
+      return new Promise(resolve => { finish = resolve; });
+    }
+    throw new Error('Unexpected command');
+  }, undefined, undefined, true, undefined, {
+    setTimeout: ((callback: () => void, ms: number) => setTimeout(callback, ms === RESTORE_POINT_WAIT_MS ? 8 : ms)) as typeof setTimeout
+  });
+  await sandbox.ready;
+  const result = await sandbox.handlers.get('system:create-restore-point')!(undefined, { description: 'Test fixture' });
+  assert.equal(result.timedOut, true); assert.equal(result.success, false);
+  assert.equal((await sandbox.handlers.get('system:create-restore-point')!(undefined, {})).backgroundPending, true);
+  assert.equal(checkpointCalls, 1);
+  assert.match(fs.readFileSync(sandbox.logFile, 'utf8'), /beklemesi sonlandırıldı/);
+  finish('');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(fs.readFileSync(sandbox.logFile, 'utf8'), /isteği tamamlandı/);
 });
 
 test('shared publisher root is never proposed; invalid names cannot escape the root', () => {
@@ -76,6 +152,51 @@ test('junctions and junction ancestors are blocked; nested junction prevents del
   fs.symlinkSync(outside, path.join(nested, 'nested'), process.platform === 'win32' ? 'junction' : 'dir');
   await assert.rejects(() => assertNoLinkedChildren(nested), /junction/);
   assert.equal(fs.readFileSync(path.join(outside, 'keep.txt'), 'utf8'), 'preserve');
+  assert.throws(() => inspectCleanupTree(nested), /Bağlantı/);
+});
+
+test('scan-time logical size shares the bounded identity walk, counts nested files and preserves content', () => {
+  const directory = path.join(fixtureRoot, 'measured'); fs.mkdirSync(directory);
+  assert.equal(inspectCleanupTree(directory).sizeBytes, 0); assert.equal(inspectCleanupTree(directory).fileCount, 0);
+  fs.mkdirSync(path.join(directory, 'nested'));
+  fs.writeFileSync(path.join(directory, 'empty'), '');
+  fs.writeFileSync(path.join(directory, 'nested', 'unicode'), 'ş');
+  fs.writeFileSync(path.join(directory, 'nested', 'data'), Buffer.alloc(1025, 7));
+  const result = inspectCleanupTree(directory);
+  assert.equal(result.sizeBytes, 1027); assert.equal(result.fileCount, 3);
+  assert.equal(result.fingerprint, treeFingerprint(directory));
+  assert.equal(inspectCleanupTree(path.join(directory, 'nested', 'data')).sizeBytes, 1025);
+  assert.equal(inspectCleanupTree(directory, true).fingerprint, treeFingerprint(directory, true));
+  assert.equal(fs.readFileSync(path.join(directory, 'nested', 'unicode'), 'utf8'), 'ş');
+  assert.equal(fs.statSync(path.join(directory, 'nested', 'data')).size, 1025);
+  let deep = path.join(fixtureRoot, 'deep-size'); fs.mkdirSync(deep);
+  for (let i = 0; i < 33; i++) { deep = path.join(deep, 'd'); fs.mkdirSync(deep); }
+  assert.throws(() => inspectCleanupTree(path.join(fixtureRoot, 'deep-size')), /sınır/);
+});
+
+test('leftover details explain exact/normalized and publisher matches without claiming ownership', () => {
+  const program = { id: 'fixture', displayName: 'ExampleApp (64-bit)', publisher: 'ExampleVendor', registryHive: 'HKCU' as const };
+  const item: LeftoverItem = { id: 'fixture', type: 'folder', path: 'ExampleVendor/ExampleApp', targetScope: '%AppData%', selected: false,
+    sizeBytes: 1027, fileCount: 3, evidence: leftoverEvidence(program, 'ExampleApp', true) };
+  assert.equal(item.evidence!.matchKind, 'normalized-name'); assert.equal(item.evidence!.locationKind, 'publisher');
+  const html = renderToStaticMarkup(React.createElement(LeftoverCandidateDetails, { item }));
+  for (const part of ['Kaynak:', '%AppData%', 'Boyut:', '1.00 KB', '3 dosya', 'tarama anı', 'Bulunma gerekçesi:', 'parantez/sürüm', 'ExampleVendor', 'ExampleApp (64-bit)', 'kesin sahiplik kanıtı değildir']) assert.ok(html.includes(part), part);
+  assert.equal(leftoverEvidence(program, program.displayName, false).matchKind, 'display-name');
+  const direct = renderToStaticMarkup(React.createElement(LeftoverCandidateDetails, { item: { ...item, evidence: leftoverEvidence(program, program.displayName, false) } }));
+  assert.ok(direct.includes('görünen adıyla eşleşiyor') && !direct.includes('Yayıncı-adı alt yolu'));
+  const injection = renderToStaticMarkup(React.createElement(LeftoverCandidateDetails, { item: { ...item, evidence: { ...item.evidence!, matchedName: '<script>unsafe</script>' } } }));
+  assert.ok(!injection.includes('<script>'));
+});
+
+test('unknown, Registry and demo sizes never invent zero or measured disk savings', () => {
+  const item: LeftoverItem = { id: 'fixture', type: 'folder', path: 'fixture', targetScope: '%AppData%', selected: false };
+  for (const sizeBytes of [undefined, -1, Infinity, NaN, 1.5]) assert.equal(leftoverSizeLabel({ ...item, sizeBytes }), 'Boyut ölçülemedi.');
+  assert.match(leftoverSizeLabel({ ...item, sizeBytes: 0, fileCount: 0 }), /^0 B · 0 dosya/);
+  assert.match(leftoverSizeLabel({ ...item, type: 'registry_key', sizeBytes: 42 }), /Registry boyutu ölçülmedi/);
+  const unknown = renderToStaticMarkup(React.createElement(LeftoverCandidateDetails, { item }));
+  assert.match(unknown, /gerekçesi mevcut değil/);
+  const demo = renderToStaticMarkup(React.createElement(LeftoverCandidateDetails, { item: { ...item, sizeOrDetails: '14.2 MB' }, demo: true }));
+  assert.match(demo, /gerçek ölçüm yapılmadı/); assert.ok(!demo.includes('Boyut ölçülemedi'));
 });
 
 test('Registry cleanup rejects system subtrees, other hives and traversal', () => {
@@ -148,7 +269,8 @@ function bundle(entry: string, external: string[]) {
 const mainBundle = bundle('electron/main.ts', ['electron']);
 function createMainSandbox(directory: string, powershell: (script: string) => string | Promise<string>,
   mockExec?: (command: string, options: unknown, callback: any) => void,
-  mockReg?: (args: string[]) => string | Promise<string>, boot = true, mockSpawn?: (...args: any[]) => any) {
+  mockReg?: (args: string[]) => string | Promise<string>, boot = true, mockSpawn?: (...args: any[]) => any,
+  mockTimers?: { setTimeout: typeof setTimeout }) {
   let ready: Promise<unknown> = Promise.resolve();
   let window: any;
   const image = { isEmpty: () => false, resize() { return this; }, toDataURL: () => 'data:image/png;base64,aGVsbG8=' };
@@ -182,10 +304,10 @@ function createMainSandbox(directory: string, powershell: (script: string) => st
   const module = { exports: {} };
   vm.runInNewContext(mainBundle, {
     module, exports: module.exports, __dirname: path.resolve('electron'), Buffer, console,
-    setTimeout: (callback: () => void, ms: number) => {
+    setTimeout: mockTimers?.setTimeout || ((callback: () => void, ms: number) => {
       if (ms >= UNINSTALL_TIMEOUT_MS) return setTimeout(callback, ms);
       queueMicrotask(callback); return 0;
-    }, clearTimeout,
+    }), clearTimeout,
     process: { ...process, platform: 'win32', resourcesPath: directory, on() {},
       env: { APPDATA: roots[0], LOCALAPPDATA: roots[1], PROGRAMDATA: roots[2], WINDIR: path.join(directory, 'Windows'), SIFT_DEV_SERVER: boot ? '1' : undefined } },
     require: (name: string) => name === 'electron' ? {
@@ -243,8 +365,42 @@ test('IPC scan excludes shared folders and logs partial Registry failure', async
   assert.equal(result.success, false);
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0].path, path.join(sandbox.roots[0], 'ExampleApp'));
+  assert.equal(result.items[0].sizeBytes, 0); assert.equal(result.items[0].fileCount, 0);
+  assert.equal(result.items[0].evidence.programName, 'ExampleApp');
+  assert.equal(result.items[0].evidence.matchKind, 'display-name');
   assert.ok(result.warnings.length > 0);
   assert.match(fs.readFileSync(sandbox.logFile, 'utf8'), /Registry access denied/);
+});
+
+test('main scan returns canonical reason and size for nested publisher/file and Registry candidates', async () => {
+  const record = { ...appRecord, displayName: 'ExampleApp (64-bit)' };
+  const key = 'HKCU\\Software\\ExampleVendor\\ExampleApp';
+  const sandbox = createMainSandbox(path.join(fixtureRoot, 'reason-scan'), async script => {
+    if (script.includes('$hives')) return JSON.stringify([record]);
+    if (script.includes("'INSTALLED'")) return 'REMOVED';
+    return script.includes("'HKCU:\\Software\\ExampleVendor\\ExampleApp'") ? 'EXISTS' : 'MISSING';
+  }, undefined, args => {
+    assert.equal(args[0], 'export'); assert.equal(args[1], key);
+    assert.ok(path.resolve(args[2]).startsWith(fixtureRoot + path.sep));
+    fs.writeFileSync(args[2], 'Windows Registry Editor Version 5.00\r\n[HKEY_CURRENT_USER\\Software\\ExampleVendor\\ExampleApp]\r\n"Value"="fixture"');
+    return '';
+  });
+  const folder = path.join(sandbox.roots[0], 'ExampleVendor', 'ExampleApp'); fs.mkdirSync(folder, { recursive: true });
+  fs.writeFileSync(path.join(folder, 'fixture.txt'), 'three');
+  fs.writeFileSync(path.join(sandbox.roots[1], 'ExampleApp'), 'file');
+  const program = (await sandbox.handlers.get('programs:get-installed')!()).programs[0];
+  await uninstallListed(sandbox, program);
+  const scan = await sandbox.handlers.get('leftovers:scan')!(undefined, { appId: program.id });
+  assert.equal(scan.success, true, scan.error); assert.equal(scan.items.length, 3);
+  const dir = scan.items.find((i: any) => i.type === 'folder'), file = scan.items.find((i: any) => i.type === 'file'), registry = scan.items.find((i: any) => i.type === 'registry_key');
+  assert.equal(dir.sizeBytes, 5); assert.equal(dir.fileCount, 1);
+  assert.equal(dir.evidence.publisher, 'ExampleVendor'); assert.equal(dir.evidence.locationKind, 'publisher');
+  assert.equal(dir.evidence.matchKind, 'normalized-name'); assert.equal(dir.evidence.programName, program.displayName);
+  assert.equal(file.sizeBytes, 4); assert.equal(file.fileCount, 1); assert.equal(file.evidence.locationKind, 'direct');
+  assert.equal(registry.path, key); assert.equal(registry.sizeBytes, undefined); assert.equal(registry.evidence.locationKind, 'publisher');
+  const invalid = await sandbox.rawHandlers.get('leftovers:delete')!(sandbox.event, { items: [{ id: dir.id, evidence: dir.evidence, sizeBytes: 0 }] });
+  assert.equal(invalid.success, false, 'display metadata cannot be sent as cleanup authority');
+  assert.equal(fs.readFileSync(path.join(folder, 'fixture.txt'), 'utf8'), 'three');
 });
 
 test('IPC cleanup deletes only fixture target and refuses replayed IDs', async () => {
@@ -259,6 +415,11 @@ test('IPC cleanup deletes only fixture target and refuses replayed IDs', async (
   const result = await sandbox.handlers.get('leftovers:delete')!(null, { items: [scan.items[0], { id: 'unknown' }] });
   assert.equal(result.deletedCount, 1);
   assert.equal(result.failedCount, 1);
+  const backupId = result.results.find((item: any) => item.success).backupId;
+  assert.match(backupId, /^[0-9a-f-]{36}$/i);
+  const linkedBackup = new CleanupBackups(sandbox.backupRoot).read(backupId);
+  assert.equal(linkedBackup.originalPath, target);
+  assert.equal(linkedBackup.state, 'completed');
   assert.equal(fs.existsSync(target), false);
   const backupDirectory = path.join(sandbox.backupRoot, fs.readdirSync(sandbox.backupRoot)[0]);
   assert.equal(fs.readFileSync(path.join(backupDirectory, 'payload', 'keepable.txt'), 'utf8'), 'recoverable');
@@ -328,6 +489,119 @@ test('Windows read-only inventory and installed-state queries use valid PowerShe
   }
 });
 
+test('inventory counters use one current list; scan snapshots stay explicit and errors stay visible', () => {
+  const programs = [
+    { hive: 'HKLM' as const, category: 'desktop' as const },
+    { hive: 'APPX' as const, category: 'store' as const },
+    { hive: 'HKCU (Mevcut Kullanıcı)' as const, category: 'desktop' as const },
+    { hive: 'HKLM (32-bit Wow6432Node)' as const, category: 'system' as const }
+  ];
+  const before = inventoryCounts(programs), after = inventoryCounts(programs.filter(p => p.category !== 'store'));
+  assert.equal(before.all, 4); assert.equal(after.all, 3); assert.equal(after.store, 0);
+  assert.equal(after.sources.APPX, 0);
+  assert.equal(Object.values(after.sources).reduce((sum, n) => sum + n, 0), after.all);
+  assert.equal(after.desktop + after.store + after.system, after.all);
+  const html = renderToStaticMarkup(React.createElement(InventoryStatus, {
+    sources: [{ id: 'APPX', status: 'ok', count: 1 }], warnings: [], listedCounts: after.sources, stale: true
+  }));
+  assert.match(html, /Listede 3 kayıt/); assert.match(html, /Listede 0/);
+  assert.match(html, /Son tarama: 1 kayıt/); assert.match(html, /henüz yenilenmedi/);
+  assert.ok(!html.includes('<details open'));
+});
+
+test('compact header source details stay accessible and incomplete-scan alert stays outside the disclosure', () => {
+  const html = renderToStaticMarkup(React.createElement(InventoryStatus, {
+    compact: true, sources: [{ id: 'HKCU', status: 'error', count: 0, error: 'Fixture permission failure' }],
+    warnings: ['Fixture metadata warning'], listedCounts: { HKLM: 0, WOW6432Node: 0, HKCU: 0, APPX: 0 }
+  }));
+  assert.ok(html.indexOf('role="alert"') < html.indexOf('<details'));
+  assert.match(html, /Tarama eksik kaldı/); assert.match(html, /Fixture permission failure/);
+  assert.match(html, /1 bilgi uyarısı/); assert.match(html, /absolute right-0 top-full/);
+  assert.ok(!html.includes('<details open'));
+});
+
+test('cleanup backup links keep exact IDs, not another backup with the same app name', () => {
+  const first = '00000000-0000-0000-0000-000000000001', second = '00000000-0000-0000-0000-000000000002';
+  const entries = [{ id: first, appName: 'Same App' }, { id: second, appName: 'Same App' }] as any;
+  const ids = cleanupBackupIds([
+    { id: 'a', path: 'a', success: true, backupId: first },
+    { id: 'b', path: 'b', success: false, backupId: second },
+    { id: 'c', path: 'c', success: true, backupId: first },
+    { id: 'd', path: 'd', success: true, backupId: '../outside' }
+  ]);
+  assert.deepEqual(ids, [first, second]);
+  assert.deepEqual(selectBackupEntries(entries, [first]), [entries[0]]);
+  assert.deepEqual(selectBackupEntries(entries, ['missing']), []);
+  assert.deepEqual(selectBackupEntries(entries, []), entries);
+});
+
+test('completed cleanup hides selection controls, keeps result and opens only associated backups', async () => {
+  const state: unknown[] = []; let cursor = 0, opened: string[] = [], restoreCalls = 0;
+  const backupId = '00000000-0000-0000-0000-000000000001';
+  const fakeReact = { ...React,
+    useState(initial: any) { const index = cursor++; if (!(index in state)) state[index] = typeof initial === 'function' ? initial() : initial;
+      return [state[index], (next: any) => { state[index] = typeof next === 'function' ? next(state[index]) : next; }]; },
+    useRef: () => ({ current: true }), useEffect() {}
+  };
+  const module = { exports: {} as any };
+  vm.runInNewContext(bundle('src/components/LeftoverCleanerModal.tsx', ['react', 'react/jsx-runtime', 'lucide-react']), {
+    module, exports: module.exports, console, setTimeout,
+    window: { api: { isElectron: true, restoreBackup: async () => { restoreCalls++; }, deleteLeftovers: async () => ({ success: true, deletedCount: 1, failedCount: 0, results: [{ id: 'one', path: 'App/cache', success: true, backupId }] }) } },
+    require: (name: string) => name === 'react' ? fakeReact : require(name)
+  });
+  const props = { appName: 'App', initialItems: [{ id: 'one', path: 'App/cache', type: 'folder', targetScope: '%AppData%', selected: true }],
+    scanWarning: 'Tarama eksik kaldı.', onClose() {}, onCleanSuccess() {}, onOpenBackups: (ids: string[]) => { opened = ids; } };
+  const render = () => { cursor = 0; return module.exports.LeftoverCleanerModal(props); };
+  const nodes = (node: any): any[] => !node || typeof node !== 'object' ? [] : Array.isArray(node) ? node.flatMap(nodes) : [node, ...nodes(node.props?.children)];
+  const text = (node: any): string => typeof node === 'string' || typeof node === 'number' ? String(node) : Array.isArray(node) ? node.map(text).join('') : node?.props ? text(node.props.children) : '';
+  let tree = render();
+  assert.ok(nodes(tree).find(n => n.type === 'button' && text(n).includes('Seçili Kalıntıları Sil')).props.disabled, 'no default selection');
+  nodes(tree).find(n => n.type === 'button' && text(n) === 'Tümünü Seç').props.onClick();
+  await nodes(render()).find(n => n.type === 'button' && text(n).includes('Seçili Kalıntıları Sil')).props.onClick();
+  tree = render(); const output = text(tree);
+  assert.match(output, /Seçilen kalıntılar temizlendi/); assert.match(output, /1 öğe silindi, 0 hata/);
+  assert.match(output, /Tarama eksik kaldı/); assert.match(output, /\[BAŞARILI\]/);
+  assert.ok(!output.includes('Tümünü Seç') && !output.includes('Seçili Kalıntıları Sil') && !output.includes('varsayılan olarak'));
+  assert.ok(!output.includes('Bu kategoride kalıntı bulunamadı'));
+  nodes(tree).find(n => n.type === 'button' && text(n).startsWith('Bu İşlemin Yedekleri')).props.onClick();
+  assert.equal(opened[0], backupId); assert.equal(opened.length, 1); assert.equal(restoreCalls, 0);
+});
+
+test('focused backup UI requires explicit restore confirmation and never substitutes missing IDs', () => {
+  const first = '00000000-0000-0000-0000-000000000001', second = '00000000-0000-0000-0000-000000000002';
+  const state: any[] = [{ success: true, entries: [
+    { id: first, appName: 'Same App', originalPath: 'App/first', state: 'completed', available: true, createdAt: '2026-10-10T10:00:00Z' },
+    { id: second, appName: 'Same App', originalPath: 'App/second', state: 'completed', available: true, createdAt: '2026-10-10T10:00:00Z' }
+  ], warnings: [] }]; let cursor = 0, restoreCalls = 0;
+  const fakeReact = { ...React,
+    useState(initial: any) { const index = cursor++; if (!(index in state)) state[index] = typeof initial === 'function' ? initial() : initial;
+      return [state[index], (next: any) => { state[index] = typeof next === 'function' ? next(state[index]) : next; }]; },
+    useRef: () => ({ current: null }), useEffect() {}
+  };
+  const module = { exports: {} as any };
+  vm.runInNewContext(bundle('src/components/BackupRecoveryModal.tsx', ['react', 'react/jsx-runtime']), {
+    module, exports: module.exports, console,
+    window: { api: { restoreBackup: () => { restoreCalls++; } } },
+    require: (name: string) => name === 'react' ? fakeReact : require(name)
+  });
+  const render = () => { cursor = 0; return module.exports.BackupRecoveryModal({ initialBackupIds: [first], onClose() {}, onResult() {} }); };
+  const nodes = (node: any): any[] => !node || typeof node !== 'object' ? [] : Array.isArray(node) ? node.flatMap(nodes) : [node, ...nodes(node.props?.children)];
+  const text = (node: any): string => typeof node === 'string' || typeof node === 'number' ? String(node) : Array.isArray(node) ? node.map(text).join('') : node?.props ? text(node.props.children) : '';
+  let tree = render();
+  assert.ok(text(tree).includes('App/first') && !text(tree).includes('App/second'));
+  assert.equal(restoreCalls, 0);
+  nodes(tree).find(n => n.type === 'button' && text(n) === 'Geri Al').props.onClick();
+  tree = render(); assert.match(text(tree), /Onayla ve Geri Al/); assert.equal(restoreCalls, 0);
+  nodes(tree).find(n => n.type === 'button' && text(n) === 'Vazgeç').props.onClick();
+  state[1] = ['missing']; state[6] = true;
+  tree = render(); assert.match(text(tree), /Bu işlemin gösterilebilir yedeği yok/);
+  assert.match(text(tree), /başka bir programın yedeği yerine seçilmedi/);
+  assert.ok(!nodes(tree).some(n => n.type === 'button' && text(n) === 'Geri Al'));
+  assert.equal(restoreCalls, 0);
+  nodes(tree).find(n => n.type === 'button' && text(n) === 'Tüm Yedekleri Göster').props.onClick();
+  assert.ok(text(render()).includes('App/second')); assert.equal(restoreCalls, 0);
+});
+
 test('cleanup UI keeps partial failures visible without closing the dialog', async () => {
   const state: unknown[] = [];
   let cursor = 0;
@@ -392,9 +666,9 @@ test('package, UI and builder describe the same Windows release', () => {
   const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
   assert.equal(require('semver').valid(manifest.version), manifest.version);
   assert.equal(manifest.version, lock.version);
-  assert.equal(APP_VERSION, '0.5.1.13');
+  assert.equal(APP_VERSION, '0.5.1.18');
   assert.equal(config.buildVersion, APP_VERSION);
-  assert.equal(config.buildNumber, '13');
+  assert.equal(config.buildNumber, '18');
   assert.equal(config.extraMetadata.shortVersionWindows, APP_VERSION);
   assert.ok(config.nsis.artifactName.includes('$' + '{buildVersion}'));
   assert.equal(manifest.license, 'MIT');
@@ -936,6 +1210,7 @@ test('all main handlers reject foreign senders before changing state or invoking
     'programs:uninstall': [{ appId: 'app', options: { expectedRevision: 'rev' } }],
     'leftovers:scan': [{ appId: 'app' }], 'leftovers:delete': [{ items: [] }],
     'backups:restore': [{ id: '00000000-0000-0000-0000-000000000000' }],
+    'backups:delete': [{ id: '00000000-0000-0000-0000-000000000000', token: 'a'.repeat(64) }],
     'system:create-restore-point': [{}], 'programs:get-icon': [{ appId: 'app', revision: 'rev' }],
     'programs:get-uninstall-activity': [], 'programs:cancel-uninstall-wait': [{ operationId: '00000000-0000-0000-0000-000000000000' }],
     'logs:renderer-error': [{ kind: 'error', message: 'foreign' }]
@@ -980,6 +1255,42 @@ async function cleanedFixture(name: string) {
   const clean = async () => sandbox.handlers.get('leftovers:delete')!(null, { items: scan.items });
   return { sandbox, target, clean, directory, powershell, setInstalled: (value: boolean) => { installed = value; } };
 }
+
+test('full fixture lifecycle preserves unselected data, restores bytes and rejects old cleanup after reinstall', async () => {
+  let installed = true;
+  const sandbox = createMainSandbox(path.join(fixtureRoot, 'full-lifecycle'), async script => {
+    if (script.includes('$hives')) return JSON.stringify(installed ? [appRecord] : []);
+    return script.includes("'INSTALLED'") ? installed ? 'INSTALLED' : 'REMOVED' : 'MISSING';
+  }, (_command, _options, callback) => { installed = false; callback(null); });
+  const target = path.join(sandbox.roots[0], 'ExampleApp');
+  const unselected = path.join(sandbox.roots[1], 'ExampleApp');
+  fs.mkdirSync(path.join(target, 'nested'), { recursive: true }); fs.mkdirSync(unselected);
+  const content = Buffer.from('Owned recovery fixture — şğü\0binary');
+  fs.writeFileSync(path.join(target, 'nested', 'data.bin'), content);
+  fs.writeFileSync(path.join(unselected, 'keep.txt'), 'unselected fixture');
+  const program = (await sandbox.handlers.get('programs:get-installed')!()).programs[0];
+  assert.equal((await uninstallListed(sandbox, program)).verified, true);
+  const scan = await sandbox.handlers.get('leftovers:scan')!(null, { appId: program.id, options: { scanRegistry: false } });
+  assert.equal(scan.success, true, scan.error);
+  const selected = scan.items.find((item: LeftoverItem) => item.path === target);
+  assert.ok(selected); assert.equal(scan.items.length, 2);
+  const deletion = await sandbox.handlers.get('leftovers:delete')!(null, { items: [{ id: selected.id }] });
+  assert.equal(deletion.success, true, deletion.error); assert.equal(deletion.deletedCount, 1);
+  assert.equal(fs.existsSync(target), false);
+  assert.equal(fs.readFileSync(path.join(unselected, 'keep.txt'), 'utf8'), 'unselected fixture');
+  const id = deletion.results[0].backupId;
+  const restore = await sandbox.handlers.get('backups:restore')!(sandbox.event, { id });
+  assert.equal(restore.success, true, restore.error);
+  assert.deepEqual(fs.readFileSync(path.join(target, 'nested', 'data.bin')), content);
+  installed = true;
+  fs.writeFileSync(path.join(target, 'new-install.txt'), 'reinstalled fixture');
+  assert.equal((await sandbox.handlers.get('leftovers:delete')!(null, { items: [{ id: selected.id }] })).success, false);
+  assert.equal((await sandbox.handlers.get('leftovers:scan')!(null, { appId: program.id, options: { scanRegistry: false } })).success, false);
+  assert.equal((await sandbox.handlers.get('backups:restore')!(sandbox.event, { id })).success, false);
+  assert.equal(fs.readFileSync(path.join(target, 'new-install.txt'), 'utf8'), 'reinstalled fixture');
+  assert.deepEqual(fs.readFileSync(path.join(target, 'nested', 'data.bin')), content);
+  assert.deepEqual(fs.readFileSync(path.join(sandbox.backupRoot, id, 'payload', 'nested', 'data.bin')), content);
+});
 
 test('cleanup journal restores from a fresh session and keeps its backup, with no replay', async () => {
   const fixture = await cleanedFixture('recovery-success');
@@ -1056,4 +1367,151 @@ test('unsafe backup destination and junction substitution fail closed', async ()
   fs.symlinkSync(outside, junction, process.platform === 'win32' ? 'junction' : 'dir');
   assert.throws(() => store.read(path.basename(junction)), /bağlantı/);
   assert.equal(fs.readdirSync(outside).length, 0);
+});
+
+const journalProgram = { ...appRecord, registryHive: 'HKCU' as const, category: 'desktop' as const, id: getProgramId(appRecord as any) };
+test('ownership rejects similar names, shared publishers and installed-location overlap', () => {
+  const target = path.join(fixtureRoot, 'owned-folder');
+  assert.ok(cleanupConflict(target, 'ExampleApp', journalProgram, [{ ...journalProgram, id: 'other', displayName: 'Example App Beta' }]));
+  assert.ok(cleanupConflict(target, 'ExampleVendor', journalProgram, [{ ...journalProgram, id: 'other', displayName: 'Unrelated' }]));
+  assert.ok(cleanupConflict(target, 'Different', journalProgram, [{ ...journalProgram, id: 'other', displayName: 'Unrelated', publisher: '', installLocation: path.join(target, 'sub') }]));
+  assert.equal(cleanupConflict(target, 'Different', journalProgram, [{ ...journalProgram, id: 'other', displayName: 'Unrelated', publisher: '', installLocation: target + '-sibling' }]), undefined);
+});
+test('fresh inventory protects a newly installed similar program after leftover scan', async () => {
+  let newProgram = false;
+  const sandbox = createMainSandbox(path.join(fixtureRoot, 'fresh-ownership'), async script => script.includes('$hives')
+    ? JSON.stringify([appRecord, ...(newProgram ? [{ ...appRecord, displayName: 'Example App Beta', registryKey: appRecord.registryKey + 'Beta' }] : [])]) : 'REMOVED');
+  const target = path.join(sandbox.roots[0], 'ExampleApp'); fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'keep'), 'keep');
+  const program = (await sandbox.handlers.get('programs:get-installed')!()).programs[0]; await uninstallListed(sandbox, program);
+  const scan = await sandbox.handlers.get('leftovers:scan')!(null, { appId: program.id, options: { scanRegistry: false } });
+  assert.equal(scan.items.length, 1); newProgram = true;
+  const result = await sandbox.handlers.get('leftovers:delete')!(null, { items: scan.items });
+  assert.equal(result.deletedCount, 0); assert.equal(result.failedCount, 1); assert.equal(fs.readFileSync(path.join(target, 'keep'), 'utf8'), 'keep');
+});
+test('backup size and explicit deletion remove only completed backup, never restored data', async () => {
+  assert.equal(formatBackupSize(12), '12 B'); assert.equal(formatBackupSize(1024), '1.0 KB'); assert.equal(formatBackupSize(1024 ** 2), '1.00 MB');
+  const fixture = await cleanedFixture('backup-delete'); await fixture.clean();
+  let entry = (await fixture.sandbox.handlers.get('backups:list')!()).entries[0];
+  assert.ok(entry.sizeBytes > 0); assert.match(entry.deleteToken, /^[a-f0-9]{64}$/);
+  await fixture.sandbox.handlers.get('backups:restore')!(fixture.sandbox.event, { id: entry.id });
+  entry = (await fixture.sandbox.handlers.get('backups:list')!()).entries[0];
+  const result = await fixture.sandbox.handlers.get('backups:delete')!(fixture.sandbox.event, { id: entry.id, token: entry.deleteToken });
+  assert.equal(result.success, true); assert.equal(fs.existsSync(path.join(fixture.sandbox.backupRoot, entry.id)), false);
+  assert.equal(fs.readFileSync(path.join(fixture.target, 'data.txt'), 'utf8'), 'recover this');
+  assert.equal((await fixture.sandbox.handlers.get('backups:delete')!(fixture.sandbox.event, { id: entry.id, token: entry.deleteToken })).success, false);
+});
+test('backup deletion rejects stale token, incomplete states, links and invalid IDs', async () => {
+  const fixture = await cleanedFixture('backup-delete-guards'); await fixture.clean();
+  const store = new CleanupBackups(fixture.sandbox.backupRoot), entry = store.list().entries[0];
+  const record = store.read(entry.id);
+  fs.writeFileSync(path.join(store.payload(record), 'extra'), 'changed');
+  assert.throws(() => store.delete(entry.id, entry.deleteToken!), /değişti/);
+  for (const state of ['prepared', 'backed-up', 'failed', 'restoring'] as const) {
+    store.save({ ...record, state }); assert.throws(() => store.delete(entry.id, store.list().entries[0].deleteToken!), /silinemez/);
+  }
+  assert.throws(() => store.delete('../outside', 'a'.repeat(64)), /kimliği/);
+  assert.equal(validIPC('backups:delete', [{ id: entry.id, token: 'a'.repeat(64), path: fixture.target }]), false);
+  assert.equal(validIPC('backups:delete', [{ id: entry.id, token: '' }]), false);
+  assert.equal(fs.existsSync(store.payload(record)), true);
+  const outside = path.join(fixtureRoot, 'delete-link-outside'); fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, 'keep'), 'keep');
+  const id = '00000000-0000-0000-0000-000000000001'; fs.symlinkSync(outside, path.join(store.root, id), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => store.delete(id, 'a'.repeat(64)), /bağlantı/); assert.equal(fs.readFileSync(path.join(outside, 'keep'), 'utf8'), 'keep');
+});
+test('restart journal resumes only matching PID creation token, not a reused PID', async () => {
+  const file = path.join(fixtureRoot, 'restart-journal', 'tracking.json'); let token: string | null = '638000000000000000:fixture'; let checks = 0;
+  const first = new UninstallJournal(file, async () => token, async () => { checks++; return false; });
+  const id = first.begin(journalProgram); await first.attach(id, 1234);
+  assert.ok(!fs.readFileSync(file, 'utf8').includes('test-uninstaller.exe'));
+  const fresh = new UninstallJournal(file, async () => token, async () => { checks++; return false; }); fresh.load();
+  assert.equal((await fresh.poll()).active, true); assert.equal(checks, 0);
+  assert.equal(fresh.acknowledge(id).success, false);
+  token = '638000000000000001:unrelated'; const ended = await fresh.poll();
+  assert.equal(ended.active, false); assert.equal(checks, 1); assert.match((ended as any).recoveryNotice, /Temizlik otomatik açılmadı/);
+});
+test('missing process identity and probe failure require explicit acknowledgement with preserved record', async () => {
+  for (const attach of [false, true]) {
+    const file = path.join(fixtureRoot, 'uncertain-' + attach, 'tracking.json');
+    const first = new UninstallJournal(file, async () => '638000000000000000:fixture', async () => true); const id = first.begin(journalProgram);
+    if (attach) await first.attach(id, 1234);
+    const fresh = new UninstallJournal(file, async () => { throw new Error('access denied'); }, async () => true); fresh.load();
+    const activity = await fresh.poll(); assert.equal(activity.active, true); assert.equal((activity as any).recoveryUncertain, true);
+    assert.throws(() => fresh.begin(journalProgram), /Önceki/); assert.equal(fresh.acknowledge('stale').success, false);
+    assert.equal(fresh.acknowledge(id).success, true); assert.equal(fresh.activity.active, false);
+    assert.ok(fs.readdirSync(path.dirname(file)).some(name => name.includes('.review-')));
+  }
+});
+test('corrupt restart journal cannot silently unlock operations or replay commands', async () => {
+  const file = path.join(fixtureRoot, 'corrupt-restart', 'tracking.json'); fs.mkdirSync(path.dirname(file)); fs.writeFileSync(file, '{bad');
+  const fresh = new UninstallJournal(file, async () => { throw new Error('must not query'); }, async () => { throw new Error('must not verify'); });
+  fresh.load(); const activity = await fresh.poll(); assert.equal(activity.active, true);
+  const id = (activity as any).operationId; assert.equal(fresh.acknowledge(id).success, true);
+  const preserved = fs.readdirSync(path.dirname(file)).find(name => name.includes('.review-'))!;
+  assert.equal(fs.readFileSync(path.join(path.dirname(file), preserved), 'utf8'), '{bad');
+});
+test('fresh main startup gates operations while recovered process runs; completion gives no cleanup grant', async () => {
+  const directory = path.join(fixtureRoot, 'restart-main'), file = path.join(directory, 'userData', 'uninstall-tracking.json');
+  let token: string | null = '638000000000000000:fixture';
+  const first = new UninstallJournal(file, async () => token, async () => false); const id = first.begin(journalProgram); await first.attach(id, 1234);
+  const fresh = createMainSandbox(directory, async script => script.includes('$siftProcess') ? token || 'SIFT_PROCESS_MISSING' : script.includes('$hives') ? JSON.stringify([appRecord]) : 'REMOVED');
+  assert.equal((await fresh.handlers.get('programs:get-uninstall-activity')!()).phase, 'recovering');
+  assert.equal((await fresh.handlers.get('programs:get-installed')!()).success, false);
+  assert.equal((await fresh.handlers.get('programs:cancel-uninstall-wait')!(fresh.event, { operationId: id })).success, false);
+  token = null; assert.equal((await fresh.handlers.get('programs:get-uninstall-activity')!()).active, false);
+  assert.equal((await fresh.handlers.get('programs:get-installed')!()).success, true);
+  assert.equal((await fresh.handlers.get('leftovers:scan')!(null, { appId: journalProgram.id })).success, false);
+});
+test('recovery notice and explicit uncertain-session confirmation are visible in the UI', () => {
+  const html = renderToStaticMarkup(React.createElement(UninstallMonitor, { activity: { active: false, recoveryNotice: 'Temizlik açılmadı' }, onStopWait() {} }));
+  assert.match(html, /Temizlik açılmadı/);
+  const activity = { active: true as const, operationId: 'fixture', appId: 'app', appName: 'App', startedAt: Date.now(), deadlineAt: Date.now(), phase: 'recovering' as const, awaitingResult: false, externalStillRunning: false, recoveryUncertain: true };
+  const confirmation = renderToStaticMarkup(React.createElement(CancelWaitModal, { activity, onClose() {}, onConfirm: async () => ({ success: true }) }));
+  assert.match(confirmation, /Kontrol Ettim, Takibi Kapat/); assert.match(confirmation, /temizlik izni verilmez/i);
+  const backupUI = fs.readFileSync('src/components/BackupRecoveryModal.tsx', 'utf8');
+  assert.ok(backupUI.includes('Onayla ve Yedeği Kalıcı Sil') && backupUI.includes('Vazgeç') && backupUI.includes('sizeBytes'));
+});
+
+test('incomplete fresh inventory prevents cleanup and restoration without changing fixture data', async () => {
+  let incomplete = false;
+  const envelope = inventoryEnvelope([appRecord]);
+  const sandbox = createMainSandbox(path.join(fixtureRoot, 'ownership-incomplete'), async script => {
+    if (!script.includes('$hives')) return 'REMOVED';
+    return JSON.stringify(incomplete ? { ...envelope, sources: envelope.sources.map((source: any) => source.id === 'HKCU' ? { ...source, status: 'error', error: 'Access denied' } : source) } : envelope);
+  });
+  const target = path.join(sandbox.roots[0], 'ExampleApp'); fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'data'), 'unchanged');
+  const program = (await sandbox.handlers.get('programs:get-installed')!()).programs[0]; await uninstallListed(sandbox, program);
+  const scan = await sandbox.handlers.get('leftovers:scan')!(null, { appId: program.id, options: { scanRegistry: false } });
+  incomplete = true;
+  assert.equal((await sandbox.handlers.get('leftovers:delete')!(null, { items: scan.items })).success, false);
+  assert.equal(fs.readFileSync(path.join(target, 'data'), 'utf8'), 'unchanged');
+  incomplete = false; assert.equal((await sandbox.handlers.get('leftovers:delete')!(null, { items: scan.items })).success, true);
+  incomplete = true; const entry = (await sandbox.handlers.get('backups:list')!()).entries[0];
+  assert.equal((await sandbox.handlers.get('backups:restore')!(sandbox.event, { id: entry.id })).success, false);
+  assert.equal(fs.existsSync(target), false); assert.equal(fs.existsSync(path.join(sandbox.backupRoot, entry.id, 'payload')), true);
+});
+
+test('Windows process fingerprint recovers a real harmless fixture across fresh main instances', { skip: process.platform !== 'win32' }, async () => {
+  const directory = path.join(fixtureRoot, 'real-restart'), releaseFile = path.join(directory, 'release-child');
+  const powershell = async (script: string) => {
+    if (script.includes('$siftProcess=Get-Process -Id')) {
+      assert.ok(!/Remove-|Start-Process|Checkpoint-Computer/.test(script));
+      return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    }
+    return script.includes('$hives') ? JSON.stringify([appRecord]) : 'REMOVED';
+  };
+  const first = createMainSandbox(directory, powershell, undefined, undefined, true, () => spawn(process.execPath, [path.resolve('tests/fixtures/holding-child.cjs'), releaseFile], { stdio: 'ignore', windowsHide: true }));
+  const program = (await first.handlers.get('programs:get-installed')!()).programs[0];
+  const resultPromise = uninstallListed(first, program);
+  const file = path.join(directory, 'userData', 'uninstall-tracking.json');
+  try {
+    const deadline = Date.now() + 15000;
+    while ((!fs.existsSync(file) || !JSON.parse(fs.readFileSync(file, 'utf8')).processToken) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.ok(JSON.parse(fs.readFileSync(file, 'utf8')).processToken);
+    const fresh = createMainSandbox(directory, powershell);
+    const activity = await fresh.handlers.get('programs:get-uninstall-activity')!();
+    assert.equal(activity.active, true); assert.equal(activity.phase, 'recovering'); assert.equal(activity.recoveryUncertain, false);
+    assert.equal((await fresh.handlers.get('programs:get-installed')!()).success, false);
+    fs.writeFileSync(releaseFile, 'release owned fixture'); await resultPromise;
+    assert.equal((await fresh.handlers.get('programs:get-uninstall-activity')!()).active, false);
+    assert.equal((await fresh.handlers.get('leftovers:scan')!(null, { appId: program.id })).success, false);
+  } finally { fs.writeFileSync(releaseFile, 'release owned fixture'); await resultPromise; }
 });

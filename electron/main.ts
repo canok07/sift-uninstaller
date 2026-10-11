@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { assertNoLinkedChildren, buildCleanupCandidates, checkCleanupPath, checkCleanupRegistry, isSafeName, treeFingerprint, parentFingerprint } from './cleanupSafety';
+import { assertNoLinkedChildren, buildCleanupCandidates, checkCleanupPath, checkCleanupRegistry, isSafeName, treeFingerprint, inspectCleanupTree, parentFingerprint } from './cleanupSafety';
 import { randomUUID } from 'node:crypto';
 import { getProgramId, getProgramRevision } from './programIdentity';
 import { OperationLock } from './operationLock';
@@ -20,6 +20,9 @@ import { validIPC } from './ipcSafety';
 import { secureWindow } from './windowSafety';
 import { CleanupBackups, noLinks, validateRegBackup, type BackupRecord } from './cleanupBackups';
 import { parseUninstallCommand } from './uninstallCommand';
+import { UninstallJournal } from './uninstallJournal';
+import { cleanupConflict, cleanupTerms, leftoverEvidence } from './cleanupOwnership';
+import { RestorePointWait } from './restorePointWait';
 import type { 
   InstalledProgram, 
   InstalledProgramsResult, 
@@ -106,15 +109,21 @@ const targetSnapshots = new Map<string, { tree: string; parent?: string }>();
 const verifiedRemovals = new Map<string, InstalledProgram>();
 let cleanupSession: { program: InstalledProgram; scanId: string } | null = null;
 const operationLock = new OperationLock();
+const uninstallJournal = new UninstallJournal(path.join(app.getPath('userData'), 'uninstall-tracking.json'), readProcessToken, isProgramStillInstalled);
 const uninstallTask = new UninstallTask(undefined, undefined, activity => {
-  writeLog('WARN', 'Beklemesi bırakılan kaldırıcı/doğrulama takibi sona erdi; temizlik izni verilmedi', activity);
+  if (activity.active) {
+    try { uninstallJournal.finish(activity.operationId); }
+    catch (error) { writeLog('ERROR', 'Kaldırma takip kaydı tamamlanamadı', String(error)); }
+    if (activity.stopReason) writeLog('WARN', 'Beklemesi bırakılan kaldırıcı/doğrulama takibi sona erdi; temizlik izni verilmedi', activity);
+  }
 });
+function uninstallActivity() { return uninstallTask.activity.active ? uninstallTask.activity : uninstallJournal.activity; }
 
 function handleExclusive<T>(channel: string, failure: (error: string) => T,
   handler: (event: IpcMainInvokeEvent, ...args: any[]) => Promise<T>): void {
   ipcMain.handle(channel, async (event, ...args) => {
     if (!trustedRenderer(event, mainWindow, rendererURL) || !validIPC(channel, args)) return failure('Geçersiz veya yetkisiz işlem isteği.');
-    if (uninstallTask.activity.active) return failure('Önceki kaldırıcı veya doğrulama hâlâ takip ediliyor. Windows kaldırma penceresinden işlemi tamamlayın veya iptal edin.');
+    if (uninstallActivity().active) return failure('Önceki kaldırıcı veya doğrulama hâlâ takip ediliyor. Windows kaldırma penceresinden işlemi tamamlayın veya iptal edin.');
     const release = operationLock.acquire(channel);
     if (!release) return failure('Başka bir işlem sürüyor. Tamamlanmasını bekleyin.');
     try { return await handler(event, ...args); }
@@ -215,13 +224,13 @@ function createWindow() {
   const window = mainWindow;
   let closeConfirmed = false, closePromptPending = false;
   window.on('close', event => {
-    if (!uninstallTask.activity.active || closeConfirmed) return;
+    if (!uninstallActivity().active || closeConfirmed) return;
     event.preventDefault();
     if (closePromptPending) return;
     closePromptPending = true;
     void dialog.showMessageBox(window, { type: 'warning', title: 'Kaldırıcı Takibi Sürüyor',
       message: 'Sift kapatılsın mı?',
-      detail: 'Kapatmak Windows kaldırıcısını durdurmaz. Takip kaybolur ve kaldırmanın tamamlandığı doğrulanamaz. Önce Windows kaldırma penceresinde işlemi tamamlamanız veya iptal etmeniz önerilir.',
+      detail: 'Kapatmak Windows kaldırıcısını durdurmaz. Yeniden açılışta kayıtlı süreç kimliği kontrol edilir; bağımsız alt süreçler takip edilemeyebilir. Temizlik otomatik açılmaz. Önce Windows kaldırma penceresinde işlemi tamamlamanız veya iptal etmeniz önerilir.',
       buttons: ['Açık tut', 'Sift’i kapat'], defaultId: 0, cancelId: 0, noLink: true
     }).then(({ response }) => {
       if (response === 1 && !window.isDestroyed()) { closeConfirmed = true; window.close(); }
@@ -283,9 +292,18 @@ function isRegistryKeySafeToDelete(regKey: string) {
 
 const backups = () => new CleanupBackups(path.join(app.getPath('userData'), 'cleanup-backups'));
 function candidateTerms(program: InstalledProgram) {
-  const name = program.displayName.trim();
-  const clean = name.replace(/\s*\(.*?\)\s*/g, '').replace(/version\s*[\d.]+/gi, '').trim();
-  return [...new Set([clean, name])].filter(isSafeName).filter(term => term.toLowerCase() !== program.publisher?.trim().toLowerCase());
+  return cleanupTerms(program).filter(isSafeName).filter(term => term.toLowerCase() !== program.publisher?.trim().toLowerCase());
+}
+async function currentOwnershipPrograms(): Promise<InstalledProgram[]> {
+  const { stdout } = await runPowerShell(INVENTORY_SCRIPT, 32 * 1024 * 1024, 30000);
+  const inventory = parseInventory(stdout);
+  if (inventory.sources.some(source => source.status === 'error')) throw new Error('Kurulu programların tüm kaynakları doğrulanamadı; veri sahipliği kontrolü için temizlik/geri alma engellendi.');
+  return inventory.programs.map(item => ({ ...item, id: getProgramId(item), registryHive: item.hive } as InstalledProgram));
+}
+function assertOwnership(target: string, program: InstalledProgram, installed: InstalledProgram[]) {
+  const term = target.split(/[\\/]/).at(-1) || '';
+  const reason = cleanupConflict(target, term, program, installed);
+  if (reason) throw new Error(reason);
 }
 async function registryDigest(key: string) {
   const directory = path.join(app.getPath('userData'), 'scan-checks');
@@ -314,14 +332,21 @@ function assertBackupTarget(record: BackupRecord) {
 // ---------------------------------------------------------------------------
 
 const acceptReport = createReportLimiter();
-ipcMain.handle('programs:get-uninstall-activity', (event, ...args) => {
+ipcMain.handle('programs:get-uninstall-activity', async (event, ...args) => {
   if (!trustedRenderer(event, mainWindow, rendererURL) || !validIPC('programs:get-uninstall-activity', args)) throw new Error('Geçersiz kaldırma durumu isteği.');
-  return uninstallTask.activity;
+  return uninstallTask.activity.active ? uninstallTask.activity : uninstallJournal.poll();
 });
 ipcMain.handle('programs:cancel-uninstall-wait', (event, ...args) => {
   const input = args[0];
   if (!trustedRenderer(event, mainWindow, rendererURL) || !validIPC('programs:cancel-uninstall-wait', args)) return { success: false, error: 'Geçersiz iptal isteği.' };
   const activity = uninstallTask.activity;
+  if (uninstallJournal.activity.active) {
+    try {
+      const result = uninstallJournal.acknowledge(input.operationId);
+      if (result.success) { verifiedRemovals.clear(); invalidateCleanup(); writeLog('WARN', 'Önceki takip açık onayla kapatıldı; temizlik verilmedi'); }
+      return result;
+    } catch (error) { return { success: false, error: String(error) }; }
+  }
   const result = uninstallTask.cancel(input.operationId);
   if (result.success) writeLog('WARN', 'Kullanıcı Sift beklemesini iptal etti; Windows işlemi öldürülmedi', activity);
   return result;
@@ -479,11 +504,25 @@ async function isProgramStillInstalled(program: InstalledProgram): Promise<boole
 }
 
 async function runTrackedUninstall(program: InstalledProgram, launch: () => ReturnType<typeof spawn>): Promise<UninstallResult> {
-  const result = await uninstallTask.run({ appId: program.id, appName: program.displayName }, launch,
+  const operationId = uninstallJournal.begin(program);
+  const result = await uninstallTask.run({ appId: program.id, appName: program.displayName, operationId }, () => {
+    const child = launch();
+    void uninstallJournal.attach(operationId, child.pid).catch(error => writeLog('ERROR', 'Kaldırıcı süreç kimliği kaydedilemedi', String(error)));
+    return child;
+  },
     (code, stopped) => verifyUninstall(() => isProgramStillInstalled(program), code, 12, undefined, stopped));
   writeLog(result.cancelled || result.timedOut ? 'WARN' : result.verified ? 'INFO' : 'ERROR',
     'Program kaldırma takip sonucu', { app: program.displayName, ...result });
   return authorizeCleanup(program, result);
+}
+async function readProcessToken(pid: number): Promise<string | null> {
+  if (!Number.isInteger(pid) || pid <= 0 || pid > 2147483647) throw new Error('Geçersiz süreç kimliği.');
+  const script = `$ErrorActionPreference='Stop'; try { $siftProcess=Get-Process -Id ${pid} -ErrorAction Stop } catch { if ($_.FullyQualifiedErrorId -notlike 'NoProcessFoundForGivenId*') { throw }; 'SIFT_PROCESS_MISSING'; return }; $siftProcess.StartTime.ToUniversalTime().Ticks.ToString() + ':' + $siftProcess.ProcessName`;
+  const { stdout } = await runPowerShell(script, 1024 * 1024, 10000);
+  const token = stdout.trim();
+  if (token === 'SIFT_PROCESS_MISSING') return null;
+  if (!/^\d{16,19}:[^\x00-\x1f]{1,200}$/.test(token)) throw new Error('Süreç başlangıç kimliği okunamadı.');
+  return token;
 }
 
 handleExclusive<UninstallResult>('programs:uninstall', error => ({ success: false, error }), async (_event, args: { appId: string; options?: UninstallOptions }): Promise<UninstallResult> => {
@@ -573,7 +612,8 @@ handleExclusive<LeftoverScanResult>('leftovers:scan', error => ({ success: false
   const scanRegistry = args.options?.scanRegistry !== false;
   const appName = program.displayName.trim();
   const publisher = program.publisher?.trim() || '';
-  const terms = candidateTerms(program).filter(term => ![...cachedProgramsMap.values()].some(other => other.id !== program.id && candidateTerms(other).some(name => name.toLowerCase() === term.toLowerCase())));
+  const ownershipPrograms = await currentOwnershipPrograms();
+  const terms = candidateTerms(program).filter(term => !cleanupConflict('', term, program, ownershipPrograms));
   const items: LeftoverItem[] = [];
   const warnings: string[] = [];
   cachedLeftoversMap.clear();
@@ -602,6 +642,7 @@ handleExclusive<LeftoverScanResult>('leftovers:scan', error => ({ success: false
       try { fs.readdirSync(root); } catch (error) { warn(root, error); continue; }
       for (const target of buildCleanupCandidates(root, terms, publisher)) {
         try {
+          assertOwnership(target, program, ownershipPrograms);
           // lstat reports access errors instead of turning them into an empty result.
           let stat: fs.Stats;
           try { stat = fs.lstatSync(target); } catch (error) {
@@ -613,10 +654,12 @@ handleExclusive<LeftoverScanResult>('leftovers:scan', error => ({ success: false
             writeLog('WARN', 'Tarama hedefi korunuyor', { path: target, reason: safety.reason });
             continue;
           }
-          const snapshot = { tree: treeFingerprint(target), parent: parentFingerprint(target) };
+          const measured = inspectCleanupTree(target);
+          const snapshot = { tree: measured.fingerprint, parent: parentFingerprint(target) };
           targetSnapshots.set(target.toLowerCase(), snapshot);
           add({ type: stat.isDirectory() ? 'folder' : 'file', path: target, targetScope: scope,
-            sizeOrDetails: stat.isDirectory() ? 'Klasör ve alt dosyalar' : Math.round(stat.size / 1024) + ' KB' });
+            sizeBytes: measured.sizeBytes, fileCount: measured.fileCount,
+            evidence: leftoverEvidence(program, path.basename(target), path.dirname(target).toLowerCase() !== root.toLowerCase()) });
         } catch (error) { warn(target, error); }
       }
     }
@@ -637,6 +680,7 @@ handleExclusive<LeftoverScanResult>('leftovers:scan', error => ({ success: false
             continue;
           }
           try {
+            assertOwnership(normalized, program, ownershipPrograms);
             const { stdout } = await runPowerShell(
               '$ErrorActionPreference = \'Stop\'; if (Test-Path -LiteralPath ' + toPowerShellLiteral(key) +
               ' -ErrorAction Stop) { Get-Item -LiteralPath ' + toPowerShellLiteral(key) +
@@ -646,7 +690,8 @@ handleExclusive<LeftoverScanResult>('leftovers:scan', error => ({ success: false
             );
             if (stdout.trim() === 'EXISTS') {
               targetSnapshots.set(normalized.toLowerCase(), { tree: await registryDigest(normalized) });
-              add({ type: 'registry_key', path: normalized, targetScope: scope, sizeOrDetails: 'Kayıt Defteri Anahtarı' });
+              add({ type: 'registry_key', path: normalized, targetScope: scope,
+                evidence: leftoverEvidence(program, term, key.toLowerCase() !== (hive + '\\' + term).toLowerCase()) });
             } else if (stdout.trim() !== 'MISSING') {
               warn(key, 'Registry sorgusu beklenen sonucu döndürmedi.');
             }
@@ -707,7 +752,12 @@ handleExclusive<LeftoverDeleteResult>('leftovers:delete', error => ({ success: f
   const session = cleanupSession;
   if (items.length && !session) throw new Error('Temizlik oturumu artık geçerli değil.');
   if (session) await assertCleanupAllowed(session.program);
+  const ownershipPrograms = items.length ? await currentOwnershipPrograms() : [];
   for (const item of items) {
+    if (session) {
+      try { assertOwnership(item.path, session.program, ownershipPrograms); }
+      catch (error) { failedCount++; results.push({ id: item.id, path: item.path, success: false, error: String(error) }); continue; }
+    }
     let journal: BackupRecord | undefined;
     const store = backups();
     const failedBackup = (error: unknown) => {
@@ -752,13 +802,13 @@ handleExclusive<LeftoverDeleteResult>('leftovers:delete', error => ({ success: f
         journal.state = 'completed'; store.save(journal);
         deletedCount++;
         cachedLeftoversMap.delete(item.id);
-        results.push({ id: item.id, path: item.path, success: true });
+        results.push({ id: item.id, path: item.path, success: true, backupId: journal.id });
         writeLog('INFO', 'Kalıntı yedeğe taşındı', { type: item.type, path: item.path, backupId: journal.id });
       } catch (err: unknown) {
         failedBackup(err);
         failedCount++;
         const msg = err instanceof Error ? err.message : String(err);
-        results.push({ id: item.id, path: item.path, success: false, error: msg });
+        results.push({ id: item.id, path: item.path, success: false, backupId: journal?.id, error: msg });
         writeLog('ERROR', 'Dosya sistemi kalıntısı silinemedi', { path: item.path, error: msg });
       }
     } else if (item.type === 'registry_key') {
@@ -793,13 +843,13 @@ handleExclusive<LeftoverDeleteResult>('leftovers:delete', error => ({ success: f
         journal.state = 'completed'; store.save(journal);
         deletedCount++;
         cachedLeftoversMap.delete(item.id);
-        results.push({ id: item.id, path: item.path, success: true });
+        results.push({ id: item.id, path: item.path, success: true, backupId: journal.id });
         writeLog('INFO', 'Registry kalıntısı silindi', { path: item.path });
       } catch (err: unknown) {
         failedBackup(err);
         failedCount++;
         const msg = err instanceof Error ? err.message : String(err);
-        results.push({ id: item.id, path: item.path, success: false, error: msg });
+        results.push({ id: item.id, path: item.path, success: false, backupId: journal?.id, error: msg });
         writeLog('ERROR', 'Registry kalıntısı silinemedi', { path: item.path, error: msg });
       }
     }
@@ -820,10 +870,16 @@ handleExclusive<LeftoverDeleteResult>('leftovers:delete', error => ({ success: f
 });
 
 handleExclusive<BackupListResult>('backups:list', error => ({ success: false, entries: [], warnings: [], error }), async () => ({ success: true, ...backups().list() }));
+handleExclusive<BackupRestoreResult>('backups:delete', error => ({ success: false, error }), async (_event, input: { id: string; token: string }) => {
+  backups().delete(input.id, input.token);
+  writeLog('WARN', 'Kullanıcı onayıyla tek temizlik yedeği kalıcı silindi', { id: input.id });
+  return { success: true, message: 'Yalnızca seçilen yedek kalıcı silindi; özgün/geri alınmış hedefe dokunulmadı.' };
+});
 handleExclusive<BackupRestoreResult>('backups:restore', error => ({ success: false, error }), async (_event, input: { id: string }) => {
   const store = backups(), record = store.read(input.id);
   if (record.state === 'restored') return { success: false, error: 'Bu yedek daha önce geri alındı.' };
   assertBackupTarget(record);
+  assertOwnership(record.originalPath, record.program, await currentOwnershipPrograms());
   if (await isProgramStillInstalled(record.program)) return { success: false, error: 'Program yeniden kurulu; mevcut verilerini korumak için geri alma engellendi.' };
   store.verify(record);
   try {
@@ -852,6 +908,7 @@ handleExclusive<BackupRestoreResult>('backups:restore', error => ({ success: fal
 });
 
 // 6. Sistem Geri Yükleme Noktası (Desteklenmiyorsa gerçeği söyle, sahte başarı üretme)
+const restorePointWait = new RestorePointWait();
 handleExclusive<RestorePointResult>('system:create-restore-point', error => ({ success: false, supported: false, error }), async (_event, args?: { description?: string }): Promise<RestorePointResult> => {
   if (process.platform !== 'win32') {
     return {
@@ -861,6 +918,7 @@ handleExclusive<RestorePointResult>('system:create-restore-point', error => ({ s
     };
   }
 
+  const result = await restorePointWait.run(async () => {
   const isElevated = await checkIsElevated();
   if (!isElevated) {
     return {
@@ -872,11 +930,12 @@ handleExclusive<RestorePointResult>('system:create-restore-point', error => ({ s
 
   try {
     const desc = args?.description || 'SiftUninstaller Kaldirma Oncesi';
+    writeLog('INFO', 'Sistem geri yükleme noktası isteği başlatıldı', { description: desc });
     await runPowerShell(
-      `Checkpoint-Computer -Description ${toPowerShellLiteral(desc)} -RestorePointType 'APPLICATION_UNINSTALL' -ErrorAction Stop`,
+      `$WarningPreference = 'Stop'; Checkpoint-Computer -Description ${toPowerShellLiteral(desc)} -RestorePointType 'APPLICATION_UNINSTALL' -ErrorAction Stop`,
       1024 * 1024
     );
-
+    writeLog('INFO', 'Sistem geri yükleme noktası isteği tamamlandı', { description: desc });
     return {
       success: true,
       supported: true,
@@ -891,6 +950,9 @@ handleExclusive<RestorePointResult>('system:create-restore-point', error => ({ s
       error: `Windows Sistem Koruması başarısız oldu (Devre dışı bırakılmış veya frekans sınırı aşılmış olabilir): ${message}`
     };
   }
+  });
+  if (result.backgroundPending) writeLog('WARN', 'Geri yükleme sonucu beklemesi sonlandırıldı; işlem zorla kesilmedi', result.error);
+  return result;
 });
 
 ipcMain.handle('logs:open-folder', async (event, ...args): Promise<{ success: boolean; path?: string; error?: string }> => {
@@ -935,6 +997,7 @@ else app.whenReady().then(async () => {
   }
 
   Menu.setApplicationMenu(null);
+  uninstallJournal.load();
   createWindow();
 
   app.on('activate', () => {

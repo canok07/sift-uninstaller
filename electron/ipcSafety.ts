@@ -20,6 +20,7 @@ export function validIPC(channel: string, args: unknown[]): boolean {
     case 'programs:get-icon': return keys(value, ['appId', 'revision']) && text(value.appId) && text(value.revision);
     case 'programs:cancel-uninstall-wait': return keys(value, ['operationId']) && uuid(value.operationId);
     case 'backups:restore': return keys(value, ['id']) && uuid(value.id);
+    case 'backups:delete': return keys(value, ['id', 'token']) && uuid(value.id) && typeof value.token === 'string' && /^[a-f0-9]{64}$/.test(value.token);
     case 'logs:renderer-error': return keys(value, ['kind', 'message', 'stack']) && typeof value.message === 'string' && value.message.length <= 4000
       && (value.stack === undefined || (typeof value.stack === 'string' && value.stack.length <= 8000)) && ['error', 'unhandledrejection', 'react'].includes(value.kind);
     default: return false;

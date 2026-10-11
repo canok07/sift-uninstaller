@@ -33,8 +33,10 @@ import { makeErrorReport, reportRendererError } from '../utils/rendererErrors';
 import { appendHistory, readHistory, type HistoryStatus } from '../utils/operationHistory';
 import { describeScan, describeInventory } from '../utils/operationResults';
 import { APP_VERSION } from '../version';
-import { confirmRestoreFailure, describeUninstall, hasVerifiedRemoval } from '../utils/uninstallFlow';
+import { confirmRestoreFailure, describeUninstall, hasVerifiedRemoval, uninstallStageLabel, type UninstallStage } from '../utils/uninstallFlow';
+import { RESTORE_POINT_WAIT_MS } from '../operationLimits';
 import { readSettings, saveSettings } from '../utils/settings';
+import { inventoryCounts } from '../utils/inventoryCounts';
 import type { 
   InstalledProgram, 
   SystemInfo, 
@@ -243,6 +245,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   const [registryReadError, setRegistryReadError] = useState<string | null>(null);
   const [inventorySources, setInventorySources] = useState<InventorySource[]>([]);
   const [inventoryWarnings, setInventoryWarnings] = useState<string[]>([]);
+  const [inventoryStale, setInventoryStale] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAppId, setSelectedAppId] = useState<string | null>(() => isElectronEnvironment ? null : 'demo-1');
@@ -270,6 +273,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
   // Aktif Kaldırma İşlemi (Satır kilidi ve asenkron takip)
   const [activeUninstallingAppId, setActiveUninstallingAppId] = useState<string | null>(null);
+  const [uninstallStage, setUninstallStage] = useState<UninstallStage | null>(null);
   const [uninstallActivity, setUninstallActivity] = useState<UninstallActivity>({ active: false });
   const [cancelWaitRequest, setCancelWaitRequest] = useState<Extract<UninstallActivity, { active: true }> | null>(null);
   const [notification, setNotification] = useState<{ text: string; type: 'info' | 'success' | 'process' | 'error' } | null>(null);
@@ -279,6 +283,8 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isBackupRecoveryOpen, setIsBackupRecoveryOpen] = useState(false);
+  const [backupFocusIds, setBackupFocusIds] = useState<string[]>([]);
+  const [lastCleanupBackupIds, setLastCleanupBackupIds] = useState<string[]>([]);
   const [historyState, setHistoryState] = useState(() => {
     try { return readHistory(window.localStorage); } catch { return readHistory(); }
   });
@@ -423,6 +429,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
     setScannedLeftoverItems([]);
     setCanClean(false);
     setIsLoadingRegistry(true);
+    setLastCleanupBackupIds([]);
     setRegistryReadError(null);
     setInventorySources([]);
     setInventoryWarnings([]);
@@ -435,6 +442,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       if (!isMountedRef.current) return;
       setInventorySources(result.sources || []);
       setInventoryWarnings(result.warnings || []);
+      setInventoryStale(false);
 
       if (result.success) {
         const iconColors = [
@@ -551,12 +559,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       return sortOrder === 'asc' ? comparison : -comparison;
     });
 
-  const categoryCounts = {
-    all: apps.length,
-    desktop: apps.filter((app) => app.category === 'desktop').length,
-    store: apps.filter((app) => app.category === 'store').length,
-    system: apps.filter((app) => app.category === 'system').length
-  };
+  const categoryCounts = inventoryCounts(apps);
 
   const selectedApp = apps.find((a) => a.id === selectedAppId);
 
@@ -595,15 +598,19 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
     operationRef.current = true;
     setConfirmUninstallApp(null);
     setActiveUninstallingAppId(app.id);
+    setUninstallStage('preparing');
     setRestoreWarning(null);
     try {
       if (isElectronEnvironment && settingCreateRestorePoint) {
-        setNotification({ text: `'${app.name}' için geri yükleme noktası oluşturuluyor...`, type: 'process' });
+        setUninstallStage('restore-point');
+        setNotification({ text: `'${app.name}' için geri yükleme noktası sonucu bekleniyor (en fazla ${RESTORE_POINT_WAIT_MS / 1000} saniye). Kaldırıcı henüz başlatılmadı.`, type: 'process' });
         const permission = await confirmRestoreFailure(
           () => window.api?.createRestorePoint?.(`SiftUninstaller - ${app.name}`) ||
             Promise.resolve({ success: false, supported: false, error: 'Geri yükleme hizmeti kullanılamıyor.' }),
           error => new Promise<boolean>(resolve => {
             restoreDecisionRef.current = resolve;
+            setUninstallStage('awaiting-confirmation');
+            setNotification({ text: 'Geri yükleme noktası sonucu doğrulanamadı. Devam veya vazgeç onayınız bekleniyor; kaldırıcı henüz başlatılmadı.', type: 'info' });
             setRestoreFailure({ appName: app.name, error });
           })
         );
@@ -614,11 +621,12 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           return;
         }
         if (permission.warning) {
-          recordHistory('Geri yükleme noktası', 'warning', `Oluşturulamadı; onayınızla devam edildi. ${permission.warning}`, app.name);
-          setRestoreWarning(`${app.name}: Geri yükleme noktası oluşturulamadı. Onayınızla devam edildi. ${permission.warning}`);
+          recordHistory('Geri yükleme noktası', 'warning', `Sonucu doğrulanamadı; onayınızla devam edildi. ${permission.warning}`, app.name);
+          setRestoreWarning(`${app.name}: Geri yükleme noktası sonucu doğrulanamadı. Onayınızla devam edildi. ${permission.warning}`);
         }
       }
       if (!isMountedRef.current) return;
+      setUninstallStage('uninstall');
       setNotification({ text: `'${app.name}' kaldırılıyor; doğrulama bekleniyor...`, type: 'process' });
       if (isElectronEnvironment) {
         if (!window.api?.uninstallProgram) throw new Error('Kaldırma hizmeti kullanılamıyor.');
@@ -636,6 +644,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           setNotification({ text: outcome.text, type: 'info' });
         } else if (hasVerifiedRemoval(result)) {
           setApps(prev => prev.filter(a => a.id !== app.id));
+          setInventoryStale(true);
           if (selectedAppId === app.id) setSelectedAppId(null);
           if (!result.rebootRequired) {
             setLastRemovedApp(app);
@@ -660,7 +669,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       if (isMountedRef.current) setNotification({ text: `Kaldırma hatası: ${error instanceof Error ? error.message : String(error)}`, type: 'error' });
     } finally {
       operationRef.current = false;
-      if (isMountedRef.current) setActiveUninstallingAppId(null);
+      if (isMountedRef.current) { setActiveUninstallingAppId(null); setUninstallStage(null); }
     }
   };
 
@@ -679,6 +688,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
     setFoundRegCount(0);
     setScannedLeftoverItems([]);
     setScanWarning(undefined);
+    setLastCleanupBackupIds([]);
 
     if (isElectronEnvironment && window.api?.scanLeftovers) {
       try {
@@ -784,9 +794,9 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
     <div className="flex flex-col w-full h-full bg-[#f8fafc] dark:bg-black text-slate-800 dark:text-zinc-100 rounded-none border-0 overflow-hidden font-sans relative transition-colors duration-200">
       
       {/* Windows 11 Pencere Çerçevesi Üst Başlık Çubuğu */}
-      <div className="bg-white/95 dark:bg-[#16181C]/95 backdrop-blur px-4 py-2.5 flex items-center border-b border-slate-200 dark:border-zinc-800 select-none shrink-0 transition-colors duration-200">
+      <div data-testid="workspace-header" className="relative z-20 bg-white/95 dark:bg-[#16181C]/95 backdrop-blur px-3 py-1 flex items-center justify-between gap-3 border-b border-slate-200 dark:border-zinc-800 shrink-0 transition-colors duration-200">
         <div className="flex items-center space-x-2.5">
-          <img src="./icon.svg" alt="" className="w-5 h-5 shrink-0" />
+          <img src="./icon.svg" alt="" className="w-4 h-4 shrink-0" />
           <span className="text-xs font-semibold text-slate-800 dark:text-zinc-200 tracking-tight">
             Sift Uninstaller
           </span>
@@ -802,7 +812,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
             </span>
           )}
         </div>
-
+        {(inventorySources.length > 0 || inventoryWarnings.length > 0) && <InventoryStatus compact sources={inventorySources} warnings={inventoryWarnings} listedCounts={categoryCounts.sources} stale={inventoryStale} />}
       </div>
 
       {/* Tarayıcıda Açıkça Belirtilen Demo Modu Bilgilendirme Şeridi */}
@@ -822,7 +832,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
       {/* Canlı İşlem ve Bildirim Rozeti */}
       {notification && (
-        <div className={`px-4 py-2.5 flex items-center justify-between text-xs transition-all border-b ${
+        <div className={`px-3 py-1.5 flex items-center justify-between text-xs transition-all border-b ${
           notification.type === 'process'
             ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-900/50'
             : notification.type === 'success'
@@ -836,8 +846,10 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
               <RotateCw className="w-3.5 h-3.5 animate-spin text-amber-600 dark:text-amber-400 shrink-0" />
             ) : notification.type === 'error' ? (
               <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
-            ) : (
+            ) : notification.type === 'success' ? (
               <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            ) : (
+              <Info className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
             )}
             <span className="font-medium">{notification.text}</span>
           </div>
@@ -856,14 +868,13 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         if (!window.api?.cancelUninstallWait) return { success: false, error: 'Bekleme hizmeti kullanılamıyor.' };
         return window.api.cancelUninstallWait(cancelWaitRequest.operationId);
       }} />}
-      <div className="p-5 sm:p-6 flex-1 flex flex-col space-y-4 overflow-hidden bg-slate-50/50 dark:bg-black">
-        {(inventorySources.length > 0 || inventoryWarnings.length > 0) && <div className="shrink-0 max-h-36 overflow-y-auto"><InventoryStatus sources={inventorySources} warnings={inventoryWarnings} /></div>}
+      <div className="p-2 sm:p-3 flex-1 min-h-0 flex flex-col gap-2 overflow-hidden bg-slate-50/50 dark:bg-black">
         {/* ========================================================================= */}
         {/* 1. ÜST EYLEM ÇUBUĞU (ACTION BAR)                                         */}
         {/* ========================================================================= */}
-        <div className="bg-white dark:bg-[#16181C] p-3 rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        <div data-testid="compact-toolbar" className="shrink-0 bg-white dark:bg-[#16181C] px-2 py-1 rounded-lg border border-slate-200/80 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-1">
           {/* Sol Taraf: Butonlar */}
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 flex-wrap">
             {/* "Programı Kaldır" butonu */}
             <button
               onClick={() => {
@@ -874,13 +885,13 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                 }
               }}
               disabled={isBusy || isLeftoverModalOpen || !selectedApp}
-              className="px-5 py-2.5 rounded-xl font-semibold text-xs sm:text-sm bg-sky-100 hover:bg-sky-200 dark:bg-sky-950/60 dark:hover:bg-sky-900/60 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800/60 flex items-center gap-2 transition-all shadow-sm active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="h-7 px-2 rounded-md font-semibold text-xs bg-sky-100 hover:bg-sky-200 dark:bg-sky-950/60 dark:hover:bg-sky-900/60 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800/60 flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               title="Seçili programı güvenli şekilde kaldır"
             >
               <Trash2 className="w-4 h-4 text-sky-700 dark:text-sky-400" />
               <span>Programı Kaldır</span>
               {selectedApp && (
-                <span className="hidden lg:inline text-[11px] font-normal bg-white/70 dark:bg-zinc-800/70 px-1.5 py-0.5 rounded text-sky-900 dark:text-sky-200 ml-1">
+                <span className="hidden xl:inline text-[11px] font-normal bg-white/70 dark:bg-zinc-800/70 px-1.5 py-0.5 rounded text-sky-900 dark:text-sky-200 ml-1">
                   ({selectedApp.name.substring(0, 14)}...)
                 </span>
               )}
@@ -890,7 +901,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
             <button
               onClick={handleReloadApps}
               disabled={isBusy || isLeftoverModalOpen || confirmUninstallApp !== null}
-              className="px-4 py-2.5 rounded-xl font-medium text-xs sm:text-sm text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/80 transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              className="h-7 px-2 rounded-md font-medium text-xs text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/80 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               title="Registry'den kurulu programları yeniden tara ve yükle"
             >
               <Package className={`w-4 h-4 text-slate-500 dark:text-zinc-400 ${isLoadingRegistry ? 'animate-spin' : ''}`} />
@@ -908,7 +919,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                 }
               }}
               disabled={isBusy || isLeftoverModalOpen || confirmUninstallApp !== null || !lastRemovedApp}
-              className="px-4 py-2.5 rounded-xl font-medium text-xs sm:text-sm text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/80 transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              className="h-7 px-2 rounded-md font-medium text-xs text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800/80 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               title="Yalnızca bu oturumda kaldırıldığı doğrulanan son programın kalıntı adaylarını tara"
             >
               <Sparkles className="w-4 h-4 text-amber-500 dark:text-amber-400" />
@@ -917,15 +928,15 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           </div>
 
           {/* Sağ Taraf: Tema, Ayarlar ve Profil */}
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="flex items-center gap-1 ml-auto">
             <button type="button" onClick={() => setIsHistoryOpen(true)} aria-label="İşlem Geçmişi" title="İşlem Geçmişi"
-              className="w-9 h-9 rounded-full bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 flex items-center justify-center border border-slate-200 dark:border-zinc-700">
+              className="w-7 h-7 rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-600 dark:text-zinc-300 flex items-center justify-center">
               <Clock3 className="w-4 h-4" />
             </button>
             {/* Gece/Gündüz Modu İkon Butonu */}
             <button
               onClick={handleToggleTheme}
-              className="w-9 h-9 rounded-full bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 flex items-center justify-center transition-all cursor-pointer border border-slate-200/60 dark:border-zinc-700 active:scale-95 shadow-sm"
+              className="w-7 h-7 rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-600 dark:text-zinc-300 flex items-center justify-center transition-all cursor-pointer active:scale-95"
               title={dark ? 'Açık Moda Geç' : 'Gece Moduna Geç (Twitter Siyahı)'}
             >
               {dark ? (
@@ -938,7 +949,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
             {/* Ayarlar Çark İkonu */}
             <button
               onClick={() => setIsSettingsOpen(true)}
-              className="w-9 h-9 rounded-full bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 flex items-center justify-center transition-colors cursor-pointer border border-slate-200/60 dark:border-zinc-700"
+              className="w-7 h-7 rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-600 dark:text-zinc-300 flex items-center justify-center transition-colors cursor-pointer"
               title="Gelişmiş Yapılandırma Ayarları"
             >
               <Settings className="w-4 h-4" />
@@ -947,7 +958,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
             {/* Profil ve Yetki Butonu */}
             <button
               onClick={() => setIsProfileOpen(true)}
-              className="w-9 h-9 rounded-full bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 flex items-center justify-center transition-colors cursor-pointer border border-slate-200/60 dark:border-zinc-700"
+              className="w-7 h-7 rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-600 dark:text-zinc-300 flex items-center justify-center transition-colors cursor-pointer"
               title="Yönetici Yetkisi ve Sistem Durumu"
             >
               <User className="w-4 h-4" />
@@ -955,7 +966,8 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           </div>
         </div>
 
-        <div className="bg-white dark:bg-[#16181C] p-1.5 rounded-xl border border-slate-200/80 dark:border-zinc-800 shadow-sm flex items-center gap-1 overflow-x-auto">
+        <div data-testid="inventory-controls" className="flex flex-col lg:flex-row gap-2 shrink-0 min-w-0">
+        <div className="bg-white dark:bg-[#16181C] p-1 rounded-lg border border-slate-200/80 dark:border-zinc-800 shadow-sm flex items-center gap-1 overflow-x-auto shrink-0">
           {([
             ['all', 'Tümü'],
             ['desktop', 'Masaüstü Programları'],
@@ -970,7 +982,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                 setFilterType('ALL');
                 setSelectedAppId(null);
               }}
-              className={`whitespace-nowrap px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+              className={`whitespace-nowrap px-2 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
                 categoryFilter === value
                   ? 'bg-sky-100 dark:bg-sky-950/70 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800'
                   : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800'
@@ -984,15 +996,15 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         {/* ========================================================================= */}
         {/* 2. ARAMA VE FİLTRE ÇUBUĞU (SEARCH BAR)                                     */}
         {/* ========================================================================= */}
-        <div className="relative">
-          <div className="w-full bg-white dark:bg-[#16181C] px-4 py-2.5 rounded-full border border-slate-200/80 dark:border-zinc-800 shadow-sm flex items-center gap-3">
+        <div className="relative flex-1 min-w-0">
+          <div className="w-full h-full bg-white dark:bg-[#16181C] px-2 py-1 rounded-lg border border-slate-200/80 dark:border-zinc-800 shadow-sm flex items-center gap-2">
             <Search className="w-4 h-4 text-slate-400 dark:text-zinc-500 shrink-0" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Program veya yayıncı ara (örn: Chrome, Visual Studio, Discord...)"
-              className="w-full bg-transparent border-none outline-none text-xs sm:text-sm text-slate-800 dark:text-zinc-100 placeholder:text-slate-400 dark:placeholder:text-zinc-500 font-sans"
+              className="w-full min-w-0 bg-transparent border-none outline-none text-xs text-slate-800 dark:text-zinc-100 placeholder:text-slate-400 dark:placeholder:text-zinc-500 font-sans"
             />
             {searchTerm && (
               <button
@@ -1007,7 +1019,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
             <div className="relative" ref={filterDropdownRef}>
               <button
                 onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
-                className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition-colors shrink-0 cursor-pointer ${
+                className={`flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-md transition-colors shrink-0 cursor-pointer ${
                   filterType !== 'ALL'
                     ? 'bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300 border border-sky-300 dark:border-sky-800'
                     : 'bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300'
@@ -1070,7 +1082,8 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         {/* ========================================================================= */}
         {/* 3. ANA LİSTE (DATA GRID / TABLE - 5 SÜTUN)                                */}
         {/* ========================================================================= */}
-        <div className="flex-1 bg-white dark:bg-[#16181C] rounded-2xl border border-slate-200/80 dark:border-zinc-800 shadow-sm overflow-hidden flex flex-col">
+        </div>
+        <div data-testid="program-table" className="flex-1 min-h-0 bg-white dark:bg-[#16181C] rounded-xl border border-slate-200/80 dark:border-zinc-800 shadow-sm overflow-hidden flex flex-col">
           <div className="flex-1 overflow-y-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -1246,7 +1259,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                           {isUninstalling ? (
                             <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-xs">
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Kaldırılıyor...</span>
+                              <span>{uninstallStageLabel(uninstallStage)}</span>
                             </div>
                           ) : (
                             <button
@@ -1298,6 +1311,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
           </div>
 
           {/* Sağ Kısım: "Kalıntıyı Temizle" Butonu */}
+          {lastCleanupBackupIds.length > 0 && <button disabled={isBusy || isLeftoverModalOpen} onClick={() => { setBackupFocusIds(lastCleanupBackupIds); setIsBackupRecoveryOpen(true); }} className="shrink-0 rounded-lg border border-sky-300 dark:border-sky-800 px-3 py-2 text-xs text-sky-700 dark:text-sky-300 disabled:opacity-50">Son Temizliğin Yedekleri</button>}
           <button
             onClick={handleOpenLeftoverModalFromPanel}
             disabled={!canClean || isBusy || isLeftoverModalOpen}
@@ -1349,9 +1363,9 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
         </div>
       )}
       {restoreFailure && (
-        <div role="dialog" aria-modal="true" aria-label="Geri yükleme noktası oluşturulamadı" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+        <div role="dialog" aria-modal="true" aria-label="Geri yükleme noktası sonucu doğrulanamadı" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
           <div className="max-w-md rounded-2xl bg-white dark:bg-zinc-900 p-5 space-y-4 text-sm">
-            <h3 className="font-bold">Geri yükleme noktası oluşturulamadı</h3>
+            <h3 className="font-bold">Geri yükleme noktası sonucu doğrulanamadı</h3>
             <p>{restoreFailure.appName}</p>
             <p className="break-words text-amber-700 dark:text-amber-300">{restoreFailure.error}</p>
             <p>Kaldırıcı henüz başlatılmadı. Geri yükleme noktası olmadan devam etmek istiyor musunuz?</p>
@@ -1413,7 +1427,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                 <p className="text-sky-600 dark:text-sky-400 font-medium">• Sessiz kaldırma aktif (desteklenen MSI/Inno/NSIS için).</p>
               )}
               {settingCreateRestorePoint && (
-                <p className="text-emerald-600 dark:text-emerald-400">• Kaldırma öncesi Sistem Geri Yükleme noktası oluşturulacak.</p>
+                <p className="text-emerald-600 dark:text-emerald-400">• Geri yükleme noktası sonucu en fazla 60 saniye beklenecek; başarısızlıkta devam için ayrıca onayınız istenecek.</p>
               )}
             </div>
 
@@ -1440,18 +1454,23 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       {/* ========================================================================= */}
       {isLeftoverModalOpen && (
         <LeftoverCleanerModal
-          onResult={(status, message, demo) => recordHistory('Kalıntı temizliği', status, message, leftoverTargetAppName, demo)}
+          onResult={(status, message, demo) => {
+            recordHistory('Kalıntı temizliği', status, message, leftoverTargetAppName, demo);
+            setNotification({ text: message, type: status === 'error' ? 'error' : 'success' });
+          }}
           appName={leftoverTargetAppName}
           initialItems={scannedLeftoverItems}
           scanWarning={scanWarning}
           onClose={() => setIsLeftoverModalOpen(false)}
-          onCleanSuccess={(cleanedCount, deletedItems) => {
+          onOpenBackups={ids => { setIsLeftoverModalOpen(false); setBackupFocusIds(ids); setIsBackupRecoveryOpen(true); }}
+          onCleanSuccess={(cleanedCount, deletedItems, backupIds) => {
+            setLastCleanupBackupIds(prev => [...new Set([...prev, ...backupIds])]);
             const remaining = scannedLeftoverItems.filter((item) => !deletedItems.some((deleted) => deleted.id === item.id));
             setScannedLeftoverItems(remaining);
             setCanClean(remaining.length > 0);
             setFoundFilesCount(remaining.filter((item) => item.type !== 'registry_key').length);
             setFoundRegCount(remaining.filter((item) => item.type === 'registry_key').length);
-            setPanelStatus(`${cleanedCount} öğe silindi; ${remaining.length} aday kaldı. İşlem ayrıntıları temizlik penceresinde.`);
+            setPanelStatus(`${cleanedCount} seçili öğe temizlendi; ${remaining.length} aday kaldı. İşlem ayrıntıları temizlik penceresinde.`);
           }}
         />
       )}
@@ -1532,7 +1551,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                 className="w-full flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 text-sky-700 dark:text-sky-400 hover:bg-slate-50 dark:hover:bg-zinc-800">
                 <Clock3 className="w-4 h-4" /> İşlem Geçmişini Aç
               </button>
-              <button type="button" disabled={isBusy || isLeftoverModalOpen} onClick={() => { setIsSettingsOpen(false); setIsBackupRecoveryOpen(true); }}
+              <button type="button" disabled={isBusy || isLeftoverModalOpen} onClick={() => { setIsSettingsOpen(false); setBackupFocusIds([]); setIsBackupRecoveryOpen(true); }}
                 className="w-full flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 text-sky-700 dark:text-sky-400 disabled:opacity-40">
                 <RotateCw className="w-4 h-4" /> Temizlik Yedeklerini Geri Al
               </button>
@@ -1583,9 +1602,9 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       {/* MODAL 4: YÖNETİCİ PROFİLİ VE SİSTEM DURUMU MODALI                          */}
       {/* ========================================================================= */}
       {isHistoryOpen && <OperationHistoryModal entries={historyState.entries} issue={historyState.issue} onClose={() => setIsHistoryOpen(false)} />}
-      {isBackupRecoveryOpen && <BackupRecoveryModal onClose={() => setIsBackupRecoveryOpen(false)} onResult={(success, message, app) => {
-        recordHistory('Temizlik geri alma', success ? 'success' : 'error', message, app);
-        if (success) { setCanClean(false); setLastRemovedApp(null); setScannedLeftoverItems([]); setPanelStatus('Temizlik izni sıfırlandı; yedek geri alındı.'); }
+      {isBackupRecoveryOpen && <BackupRecoveryModal initialBackupIds={backupFocusIds} onClose={() => setIsBackupRecoveryOpen(false)} onResult={(success, message, app, action) => {
+        recordHistory(action === 'delete' ? 'Yedek silme' : 'Temizlik geri alma', success ? 'success' : 'error', message, app);
+        if (success && action === 'restore') { setCanClean(false); setLastRemovedApp(null); setScannedLeftoverItems([]); setPanelStatus('Temizlik izni sıfırlandı; yedek geri alındı.'); }
       }} />}
       {isProfileOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">

@@ -3,7 +3,7 @@ import type { UninstallActivity, UninstallResult } from '../src/types';
 
 export const UNINSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 type Child = { pid?: number; once(event: string, callback: (...args: any[]) => void): unknown };
-type Identity = { appId: string; appName: string };
+type Identity = { appId: string; appName: string; operationId?: string };
 type Clock = { now(): number; setTimer(callback: () => void, ms: number): any; clearTimer(timer: any): void };
 const clock: Clock = { now: Date.now, setTimer: setTimeout, clearTimer: clearTimeout };
 type Task = Identity & {
@@ -54,7 +54,7 @@ export class UninstallTask {
     if (task.childPending || task.workerPending || this.task !== task) return;
     const activity = this.activity;
     this.task = undefined;
-    if (task.stopReason) this.onDrained(activity);
+    this.onDrained(activity);
   }
 
   run(identity: Identity, launch: () => Child,
@@ -62,7 +62,7 @@ export class UninstallTask {
     if (this.task) return Promise.resolve({ success: false, verified: false, error: 'Önceki kaldırıcı veya doğrulama hâlâ takip ediliyor.' });
     let reply!: (result: UninstallResult) => void;
     const result = new Promise<UninstallResult>(resolve => { reply = resolve; });
-    const task: Task = { ...identity, operationId: randomUUID(), startedAt: this.timing.now(),
+    const task: Task = { ...identity, operationId: identity.operationId || randomUUID(), startedAt: this.timing.now(),
       deadlineAt: this.timing.now() + this.timeoutMs, phase: 'running', childPending: false,
       workerPending: true, settled: false, reply };
     this.task = task;

@@ -14,9 +14,9 @@ export function isSafeName(value: string): boolean {
 
 // Bounded tree identity, recorded at scan time and rechecked synchronously just
 // before moving. Node path operations are not an atomic OS handle transaction.
-export function treeFingerprint(target: string, contents = false): string {
+export function inspectCleanupTree(target: string, contents = false): { fingerprint: string; sizeBytes: number; fileCount: number } {
   const hash = createHash('sha256');
-  let entries = 0, bytes = 0;
+  let entries = 0, bytes = 0, sizeBytes = 0, fileCount = 0;
   const walk = (file: string, relative: string, depth: number) => {
     if (++entries > 10000 || depth > 32) throw new Error('Hedef güvenli inceleme sınırını aşıyor.');
     const stat = fs.lstatSync(file);
@@ -24,7 +24,11 @@ export function treeFingerprint(target: string, contents = false): string {
     hash.update(JSON.stringify([relative, stat.isDirectory() ? 'dir' : 'file', ...(contents ? [] : [stat.dev, stat.ino, stat.birthtimeMs, stat.mtimeMs, stat.size])]));
     if (stat.isDirectory()) {
       for (const name of fs.readdirSync(file).sort()) walk(path.join(file, name), path.join(relative, name), depth + 1);
-    } else if (contents) {
+    } else {
+      fileCount++;
+      sizeBytes += stat.size;
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) throw new Error('Dosya boyutu güvenli ölçüm sınırını aşıyor.');
+      if (!contents) return;
       if ((bytes += stat.size) > 512 * 1024 * 1024) throw new Error('Yedek doğrulama boyut sınırını aşıyor.');
       const fd = fs.openSync(file, 'r');
       try {
@@ -35,7 +39,11 @@ export function treeFingerprint(target: string, contents = false): string {
     }
   };
   walk(target, '', 0);
-  return hash.digest('hex');
+  return { fingerprint: hash.digest('hex'), sizeBytes, fileCount };
+}
+
+export function treeFingerprint(target: string, contents = false): string {
+  return inspectCleanupTree(target, contents).fingerprint;
 }
 
 export function parentFingerprint(target: string): string {

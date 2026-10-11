@@ -55,14 +55,16 @@ export interface UninstallResult {
   backgroundPending?: boolean;
 }
 
-export type UninstallActivity = { active: false } | {
+export type UninstallActivity = { active: false; recoveryNotice?: string } | {
   active: true;
   operationId: string;
   appId: string;
   appName: string;
   startedAt: number;
   deadlineAt: number;
-  phase: 'running' | 'verifying';
+  phase: 'running' | 'verifying' | 'recovering';
+  recoveryUncertain?: boolean;
+  recoveryError?: string;
   awaitingResult: boolean;
   externalStillRunning: boolean;
   stopReason?: 'cancelled' | 'timedOut';
@@ -84,6 +86,16 @@ export interface LeftoverItem {
   path: string;
   targetScope: LeftoverScope;
   sizeOrDetails?: string;
+  // Logical file lengths at scan time, not allocated/reclaimable disk space.
+  sizeBytes?: number;
+  fileCount?: number;
+  evidence?: {
+    programName: string;
+    matchedName: string;
+    matchKind: 'display-name' | 'normalized-name';
+    locationKind: 'direct' | 'publisher';
+    publisher?: string;
+  };
   selected: boolean;
 }
 
@@ -108,6 +120,7 @@ export interface LeftoverDeleteResult {
     id: string;
     path: string;
     success: boolean;
+    backupId?: string;
     error?: string;
   }>;
   error?: string;
@@ -116,6 +129,8 @@ export interface LeftoverDeleteResult {
 export interface RestorePointResult {
   success: boolean;
   supported: boolean;
+  timedOut?: boolean;
+  backgroundPending?: boolean;
   error?: string;
   description?: string;
 }
@@ -152,6 +167,8 @@ export interface BackupEntry {
   state: 'prepared' | 'backed-up' | 'completed' | 'failed' | 'restoring' | 'restored';
   available?: boolean;
   error?: string;
+  sizeBytes?: number;
+  deleteToken?: string;
 }
 export interface BackupListResult { success: boolean; entries: BackupEntry[]; warnings: string[]; error?: string }
 export interface BackupRestoreResult { success: boolean; error?: string; message?: string }
@@ -172,6 +189,7 @@ export interface ElectronAPI {
   openLogFolder: () => Promise<{ success: boolean; path?: string; error?: string }>;
   listBackups: () => Promise<BackupListResult>;
   restoreBackup: (id: string) => Promise<BackupRestoreResult>;
+  deleteBackup: (id: string, token: string) => Promise<BackupRestoreResult>;
 }
 
 declare global {

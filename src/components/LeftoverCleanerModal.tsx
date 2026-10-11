@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { LeftoverItem } from '../types';
 import { describeCleanup } from '../utils/operationResults';
+import { cleanupBackupIds } from '../utils/backupSelection';
+import { LeftoverCandidateDetails } from './LeftoverCandidateDetails';
 import type { HistoryStatus } from '../utils/operationHistory';
 
 interface LeftoverCleanerModalProps {
@@ -21,7 +23,8 @@ interface LeftoverCleanerModalProps {
   initialItems: LeftoverItem[];
   scanWarning?: string;
   onClose: () => void;
-  onCleanSuccess: (cleanedCount: number, deletedItems: LeftoverItem[]) => void;
+  onCleanSuccess: (cleanedCount: number, deletedItems: LeftoverItem[], backupIds: string[]) => void;
+  onOpenBackups?: (backupIds: string[]) => void;
   onResult?: (status: HistoryStatus, message: string, demo: boolean) => void;
 }
 
@@ -31,6 +34,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
   scanWarning,
   onClose,
   onCleanSuccess,
+  onOpenBackups,
   onResult
 }) => {
   // Güvenlik gereksinimi: Varsayılan olarak hiçbir şey seçili olmasın (selected: false)
@@ -42,6 +46,8 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
   const [cleaningLogs, setCleaningLogs] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultSummary, setResultSummary] = useState<string | null>(null);
+  const [backupIds, setBackupIds] = useState<string[]>([]);
+  const completed = Boolean(resultSummary && !errorMessage && !isCleaning && items.length === 0);
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -111,13 +117,14 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
         });
 
         setCleaningLogs((prev) => [...prev, ...newLogs]);
-
-        setItems((prev) => prev.filter((item) => !outcome.deletedIds.includes(item.id)));
+        const resultBackupIds = cleanupBackupIds(deleteResult.results);
+        setBackupIds(prev => [...new Set([...prev, ...resultBackupIds])]);
+        setItems((prev) => prev.filter((item) => !outcome.deletedIds.includes(item.id)).map(item => ({ ...item, selected: false })));
         setResultSummary(outcome.summary);
         setIsCleaning(false);
         setErrorMessage(outcome.error);
         // The parent updates remaining targets; this dialog stays open for inspection.
-        onCleanSuccess(actuallyDeleted.length, actuallyDeleted);
+        onCleanSuccess(actuallyDeleted.length, actuallyDeleted, resultBackupIds);
       } catch (err: unknown) {
         onResult?.('error', err instanceof Error ? err.message : String(err), false);
         if (!isMountedRef.current) return;
@@ -140,13 +147,13 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
         // Demo ortamında arayüz testini sağlamak için yerel listeyi güncelle
         setItems((prev) => prev.filter((i) => !i.selected));
         setResultSummary(`[Demo] ${selectedItems.length} öğe arayüzden kaldırıldı.`);
-        onCleanSuccess(selectedItems.length, selectedItems);
+        onCleanSuccess(selectedItems.length, selectedItems, []);
       }, 600);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
+        <div role="dialog" aria-modal="true" aria-label="Güvenli Kalıntı Temizliği" className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
       <div className="bg-white dark:bg-[#16181C] border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-2xl max-w-3xl w-full max-h-[92vh] flex flex-col overflow-hidden">
         {/* Üst Başlık */}
         <div className="bg-slate-50 dark:bg-black px-5 py-4 border-b border-slate-200 dark:border-zinc-800 flex items-start justify-between">
@@ -165,7 +172,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
-                <strong className="text-slate-700 dark:text-zinc-200">'{appName}'</strong> için tespit edilen doğrulanmış aday kalıntılar
+                <strong className="text-slate-700 dark:text-zinc-200">'{appName}'</strong> adına göre bulunan kalıntı adayları; sahiplik kesin değildir.
               </p>
             </div>
           </div>
@@ -182,6 +189,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
         </div>
 
         {/* Taranan Alanlar Filtresi */}
+        {!completed && (
         <div className="px-5 py-2.5 bg-slate-50/70 dark:bg-black/40 border-b border-slate-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto py-1">
             <span className="text-slate-400 dark:text-zinc-500 text-[11px] mr-1">Kapsam:</span>
@@ -207,7 +215,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
             ))}
           </div>
 
-          <div className="flex items-center gap-2 ml-auto">
+          {items.length > 0 && <div className="flex items-center gap-2 ml-auto">
             <button
               onClick={() => selectAll(true)}
               className="text-[11px] text-sky-600 dark:text-sky-400 hover:underline cursor-pointer font-medium"
@@ -223,8 +231,9 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
             >
               Seçimi Kaldır
             </button>
-          </div>
+          </div>}
         </div>
+        )}
 
         {/* Hata Bildirimi */}
         {scanWarning && (
@@ -245,18 +254,25 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
         )}
 
         {/* Bilgilendirme Notu */}
+        {!completed && items.length > 0 && (
         <div className="px-5 py-2.5 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/40 text-amber-800 dark:text-amber-200 text-xs flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <div>
-            Güvenliğiniz için hiçbir kalıntı varsayılan olarak seçilmemiştir. Lütfen silmek istediğiniz öğeleri kontrol edip onaylayarak silin.
+            Güvenliğiniz için hiçbir kalıntı varsayılan olarak seçilmemiştir. Ad eşleşmesi sahipliği kanıtlamaz; kişisel veya paylaşılan veri içerebilir. Yalnızca tanıdığınız ve silmek istediğiniz öğeleri seçin. Boyutlar tarama anındaki dosya uzunluklarıdır; kazanılacak disk alanı garantisi değildir.
           </div>
         </div>
+        )}
 
         {/* Kalıntı Listesi */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-slate-50/50 dark:bg-[#16181C]">
-          {filteredItems.length === 0 ? (
+          {completed ? (
+            <div role="status" className="text-center py-6 space-y-2 text-sm text-emerald-700 dark:text-emerald-300">
+              <p className="font-semibold">Seçilen kalıntılar temizlendi.</p>
+              <p className="text-xs text-slate-500 dark:text-zinc-400">Bu sonuç yalnızca seçtiğiniz hedefler içindir; taranmayan alanlarda kalıntı bulunmadığını garanti etmez.</p>
+            </div>
+          ) : filteredItems.length === 0 ? (
             <div className="text-center py-10 text-slate-400 dark:text-zinc-500 text-xs">
-              Bu kategoride kalıntı bulunamadı.
+              Seçilen kapsamda gösterilecek kalıntı adayı yok.{items.length > 0 && ' Diğer kapsamları kontrol edebilirsiniz.'}
             </div>
           ) : (
             filteredItems.map((item) => (
@@ -288,13 +304,11 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
                     <span className="text-[10px] px-1.5 py-0.2 rounded font-sans font-semibold border bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 border-slate-200 dark:border-zinc-700">
                       {item.targetScope}
                     </span>
-                    <span className="text-[11px] text-slate-400 dark:text-zinc-500 font-sans">
-                      {item.sizeOrDetails}
-                    </span>
                   </div>
                   <div className="text-slate-800 dark:text-zinc-200 break-all text-xs mt-1 font-semibold">
                     {item.path}
                   </div>
+                  <LeftoverCandidateDetails item={item} demo={!window.api?.isElectron} />
                 </div>
               </div>
             ))
@@ -332,7 +346,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
         {/* Alt Eylem Çubuğu */}
         <div className="p-4 bg-white dark:bg-black border-t border-slate-200 dark:border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-xs text-slate-500 dark:text-zinc-400">
-            Seçili: <strong className="text-slate-800 dark:text-zinc-100">{selectedItems.length}</strong> / {items.length} kalıntı
+            {completed ? 'Temizlik sonucu' : <>Seçili: <strong className="text-slate-800 dark:text-zinc-100">{selectedItems.length}</strong> / {items.length} kalıntı</>}
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
@@ -341,10 +355,11 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
               disabled={isCleaning}
               className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 text-xs rounded-xl transition-colors disabled:opacity-50 cursor-pointer font-medium"
             >
-              Vazgeç / Kapat
+              {completed ? 'Kapat' : 'Vazgeç / Kapat'}
             </button>
 
-            <button
+            {backupIds.length > 0 && onOpenBackups && <button disabled={isCleaning} onClick={() => onOpenBackups(backupIds)} className="px-3 py-2 text-xs rounded-xl border border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-300 disabled:opacity-50">Bu İşlemin Yedekleri ({backupIds.length})</button>}
+            {!completed && items.length > 0 && <button
               onClick={handleExecuteClean}
               disabled={selectedItems.length === 0 || isCleaning}
               className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs rounded-xl transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
@@ -360,7 +375,7 @@ export const LeftoverCleanerModal: React.FC<LeftoverCleanerModalProps> = ({
                   <span>Seçili Kalıntıları Sil ({selectedItems.length})</span>
                 </>
               )}
-            </button>
+            </button>}
           </div>
         </div>
       </div>

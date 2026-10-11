@@ -16,6 +16,7 @@ const api: ElectronAPI = {
   isElectron: true,
   listBackups: () => ipcRenderer.invoke('backups:list'),
   restoreBackup: id => ipcRenderer.invoke('backups:restore', { id }),
+  deleteBackup: (id, token) => ipcRenderer.invoke('backups:delete', { id, token }),
   reportRendererError: report => ipcRenderer.invoke('logs:renderer-error', report),
   getProgramIcon: (appId, revision) => ipcRenderer.invoke('programs:get-icon', { appId, revision }),
   getUninstallActivity: () => ipcRenderer.invoke('programs:get-uninstall-activity'),

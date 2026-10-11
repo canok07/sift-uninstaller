@@ -8,21 +8,25 @@ A Windows desktop app for managing installed programs and reviewing leftover cle
 
 ### Download for Windows
 
-[Download the 0.5.1.13 setup EXE](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.13/Sift.Uninstaller-Setup-0.5.1.13.exe) · [Release details and SHA-256 checksum](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.13)
+[Download the 0.5.1.18 setup EXE](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.18/Sift.Uninstaller-Setup-0.5.1.18.exe) · [Release details and SHA-256 checksum](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.18)
 
 For **Windows 10/11 x64**. Download and run the setup EXE, then launch Sift and approve the administrator prompt. **No Node.js, terminal commands or separate dependency installation are needed.** The EXE is a setup installer, not a portable single-file application.
 
-This is an **unsigned development release**. Windows may show an unknown-publisher or SmartScreen warning; do not bypass a warning for an unverified download. Use this repository's release assets and compare the EXE's SHA-256 with the supplied `SHA256SUMS-0.5.1.13.txt`. A matching checksum verifies the downloaded bytes, not publisher identity or safety. Real installer/UAC/upgrade and real uninstall tests are still pending; automated tests use isolated fixtures.
+This is an **unsigned development release**. Windows may show an unknown-publisher or SmartScreen warning; do not bypass a warning for an unverified download. Use this repository's release assets and compare the EXE's SHA-256 with the supplied `SHA256SUMS-0.5.1.18.txt`. A matching checksum verifies the downloaded bytes, not publisher identity or safety. Automated Windows checks use isolated fixtures. Real MSI removal, the complete cleanup/reinstall cycle and clean-install/upgrade/UAC acceptance remain unverified; see [verification details](docs/VERIFICATION.md).
 
 ### About
 
 Sift Uninstaller brings desktop programs, Microsoft Store apps and Windows components into one interface. It uses Windows Registry and AppX information to list installed software, launches native uninstallers and offers a separate, user-reviewed cleanup step.
 
-The project is under active development in the **0.5 series**. The current source version is **0.5.1.13**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases). Development prereleases may not appear at the generic “latest release” link; use the versioned download above. This is a development release, not a claim of production readiness.
+The project is under active development in the **0.5 series**. The current version is **0.5.1.18**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases). Development prereleases may not appear at the generic “latest release” link; use the versioned download above. This is a development release, not a claim of production readiness.
+
+System Restore waits are limited to 60 seconds. A timeout does not kill the Windows transaction or automatically start uninstalling: explicit continue/cancel confirmation is required. A pending request is not duplicated within the running app, and Windows frequency-limit warnings are failures rather than false success.
 
 ### Features
 
 - **Organized application list:** separate tabs for Desktop Programs, Store Apps and Windows Components, plus an all-apps view.
+- **Compact workspace and consistent counts:** short action toolbar, source summary in the header, combined tabs/search on wide windows, and current-list counts distinguished from the last scan snapshot. Source details open over the workspace without pushing the list down; incomplete-scan warnings stay visible outside the collapsed details.
+- **Cleanup results and linked backups:** completed cleanup shows its result without empty selection controls. Open the exact backups from that operation; restoring still requires separate confirmation and safety checks.
 - **Source-aware scanning:** show HKLM, 32-bit Registry, HKCU and Store/AppX results separately. If one source fails, retain the available records with a persistent incomplete-scan warning; do not present failure as an empty successful list.
 - **Application identity and icons:** resolve Store display names from package metadata while keeping the technical package name for verification. Load local application icons on demand; keep a letter fallback when metadata or an icon cannot be read.
 - **Search and sorting:** search by application, publisher or Registry path; sort by name, size, publisher or installation date where the information is available.
@@ -30,6 +34,7 @@ The project is under active development in the **0.5 series**. The current sourc
 - **Removal verification:** check Registry or AppX presence after the uninstaller exits. Entries remain listed when removal cannot be confirmed; cleanup is deferred when a restart is required.
 - **Bounded uninstall waiting:** track the launched uninstaller and subsequent verification for up to ten minutes. A confirmed **Stop Waiting** action ends Sift's wait without force-killing the Windows operation. Keep a visible background status and block conflicting actions until the tracked process and any in-flight verification finish. Closing Sift while tracking is active requires another confirmation.
 - **Focused leftover review:** look for name-based folder and Registry candidates in selected AppData, LocalAppData, ProgramData, HKCU Software and HKLM Software locations. Nothing is selected for deletion by default.
+- **Candidate explanations:** show each candidate's source, exact or normalized name match and publisher-name path where applicable. File/folder sizes are logical file lengths recorded during the bounded safety scan, not promised disk savings; Registry sizes are explicitly unmeasured. Name matches remain ownership guesses, not proof.
 - **Cleanup safeguards:** exclude shared publisher roots, restrict file targets to allowed locations, and reject junction/link targets and protected Registry areas. Partial failures remain visible in the cleanup window.
 - **Reviewable recovery:** journal each cleanup target before mutation and keep a verified backup. Settings → Restore Cleanup Backups offers explicit, per-item confirmation, preserves the backup, and refuses existing targets or reinstalled programs. Interrupted and failed operations remain visible.
 - **Desktop security boundaries:** sandboxed renderer, isolated preload bridge, sender/main-frame and bounded input checks on every IPC channel, restricted script policy, and blocked navigation, popups, webviews and permission requests. Desktop EXE uninstallers run without a command shell.
@@ -37,6 +42,8 @@ The project is under active development in the **0.5 series**. The current sourc
 - **Diagnostics and appearance:** persistent operation/error logs, a system/permission status panel, light/dark themes and a dedicated Sift application icon.
 - **Operation history:** reopen the last 100 list-refresh, uninstall, leftover-scan and cleanup results, including timestamps, app names and error details. Demo results are explicitly labelled. Open History from the toolbar clock or Settings.
 - **Persistent preferences:** restore-point, scan-area and silent-uninstall options are saved locally alongside the theme.
+- **Restart-aware monitoring:** persist the selected program identity and launched process PID/start time without saving executable commands. On restart, follow only the matching process; process-query failures or incomplete records keep destructive actions blocked until explicit acknowledgement. Finishing recovered tracking never grants cleanup.
+- **Backup management:** display bounded backup sizes and offer a separate, irreversible per-item delete confirmation. Only completed/restored backups with unchanged list-time identity can be deleted; interrupted/failed records and original/restored targets are preserved. No automatic purge.
 
 ### Install and use
 
@@ -52,8 +59,9 @@ Open diagnostics through **Settings → Open Logs** (currently labelled **Ayarla
 ### Important limitations
 
 - Leftover detection uses names and a limited set of locations. It is not a full-drive scan and does not guarantee that every leftover is found or that every name match belongs to the selected app.
+- General Temp/cache cleaning and RAM optimization are not included. AppData review is limited to candidates associated with a verified uninstall; it is not a blanket AppData cleaner.
 - Cleanup is enabled only for programs whose removal was verified in the current session; refreshing the list or restarting the app invalidates that permission. Presence is checked again before cleanup to block installed or reinstalled programs.
-- Stopping the wait or reaching its ten-minute limit does **not** cancel or roll back the Windows uninstall, remove the list entry, or grant cleanup permission. Use the uninstaller's own Cancel control first. The limit starts when the uninstaller is launched, not during an earlier restore-point attempt. Tracking covers Sift's launched process and verification, not arbitrary detached subprocesses. Reloading the interface retains tracking; fully closing/restarting Sift loses this in-memory tracking. A later refresh can reflect actual removal but does not authorize cleanup for the stopped operation.
+- Stopping the wait or reaching its ten-minute limit does **not** cancel or roll back the Windows uninstall, remove the list entry, or grant cleanup permission. Use the uninstaller's own Cancel control first. The limit starts when the uninstaller is launched, not during an earlier restore-point attempt. Tracking covers Sift's launched process, not arbitrary detached subprocesses. Restart recovery compares PID plus process creation time and checks program presence after that launcher ends; a reused PID is not followed. Missing/corrupt process records require explicit user acknowledgement after checking Windows. The previous result/exit code is not reconstructed and cleanup is never automatically authorized. Read-only inventory may remain blocked while recovered tracking is active.
 - Selected files/folders are moved into `cleanup-backups` in the app's user-data directory; Registry keys are exported there before deletion. Open **Settings → Restore Cleanup Backups** (Turkish: **Ayarlar → Temizlik Yedeklerini Geri Al**) to review and explicitly restore a verified backup. This restores data, not the program. Existing targets are not intentionally overwritten or merged; partial restore data and backups are preserved for manual review. Previous-format backups remain on disk but are not automatically imported. A cross-volume move can fail safely rather than deleting the original. Backups have no automatic retention/deletion; check disk space.
 - File tree identities and Registry export hashes are compared against the scan, and ambiguous application/shared-root names are excluded. This reduces accidental cleanup but name-based discovery still cannot prove ownership. Path checks/moves and Registry checks/imports/deletes are not an atomic OS transaction against another process changing the target concurrently. Do not run external installs or data-modifying tools during cleanup/recovery; important data needs an independent backup.
 - Automatic desktop uninstalling supports local absolute EXE paths and MSI commands. Command interpreters, scripts, network executable paths and malformed quoting are rejected; unsupported uninstallers must be run through Windows instead. No command-shell fallback is used.
@@ -64,6 +72,7 @@ Open diagnostics through **Settings → Open Logs** (currently labelled **Ayarla
 - Logs and history can contain application names and local paths. History is stored locally, keeps only the latest 100 results, and shortens very long details; it is not a backup or a complete audit trail. If local storage is unavailable, a warning states that new history is session-only. Review entries before sharing an issue report.
 - Desktop diagnostics also capture uncaught UI errors, unhandled promise rejections, React render failures, renderer load/process failures and error-level renderer console messages (including startup module/MIME errors). Reports are local, size/rate-limited and are not uploaded. The recovery screen does not stop an already-running Windows uninstaller; a missing bundle can still prevent that screen from loading.
 - Store names depend on manifest/resource availability; unresolved resources retain the technical name and produce a metadata warning. Icons are read only from local files, not network paths. Missing/inaccessible icons and non-default indexed DLL resources can retain the fallback letter or the file's default icon.
+- Before cleanup scanning/deletion or backup restoration, a fresh complete inventory checks similar product/publisher names and overlapping installed locations. A failed inventory source blocks those operations. This is conservative protection, not proof that a leftover belongs to the selected program. Backup deletion affects only the UUID backup directory, not its recorded original path, and remains non-atomic against external concurrent writers.
 
 ### Development
 
@@ -109,17 +118,23 @@ Sift Uninstaller is licensed under the [MIT License](LICENSE). Existing file-spe
 
 ### Windows için indir
 
-[0.5.1.13 kurulum EXE'sini indir](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.13/Sift.Uninstaller-Setup-0.5.1.13.exe) · [Sürüm bilgileri ve SHA-256 dosya özeti](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.13)
+[0.5.1.18 kurulum EXE'sini indir](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.18/Sift.Uninstaller-Setup-0.5.1.18.exe) · [Sürüm bilgileri ve SHA-256 dosya özeti](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.18)
 
 **Windows 10/11 x64** içindir. Kurulum EXE'sini indirip çalıştırın; ardından Sift'i açarak yönetici izni isteğini onaylayın. **Node.js, terminal komutu veya ayrıca bağımlılık kurulumu gerekmez.** EXE bir kurulum dosyasıdır; tek dosyalık taşınabilir uygulama değildir.
 
-Bu, **dijital imzası olmayan bir geliştirme sürümüdür**. Windows bilinmeyen yayıncı veya SmartScreen uyarısı gösterebilir; doğrulanmamış bir indirme için uyarıyı aşmayın. Bu deponun sürüm dosyalarını kullanın ve EXE'nin SHA-256 özetini beraberindeki `SHA256SUMS-0.5.1.13.txt` ile karşılaştırın. Eşleşme indirilen dosyanın bütünlüğünü doğrular; yayıncı kimliğini veya güvenliğini kanıtlamaz. Gerçek kurulum/UAC/yükseltme ve gerçek kaldırma testleri henüz yapılmadı; otomatik testler ayrı test verileri kullanır.
+Bu, **dijital imzası olmayan bir geliştirme sürümüdür**. Windows bilinmeyen yayıncı veya SmartScreen uyarısı gösterebilir; doğrulanmamış bir indirme için uyarıyı aşmayın. Bu deponun sürüm dosyalarını kullanın ve EXE'nin SHA-256 özetini beraberindeki `SHA256SUMS-0.5.1.18.txt` ile karşılaştırın. Eşleşme indirilen dosyanın bütünlüğünü doğrular; yayıncı kimliğini veya güvenliğini kanıtlamaz. Otomatik Windows kontrolleri ayrı test verileri kullanır. Gerçek MSI kaldırma, tam temizlik/yeniden kurma döngüsü ve temiz kurulum/yükseltme/UAC kabulü henüz doğrulanmadı; [doğrulama ayrıntılarına](docs/VERIFICATION.md) bakın.
 
 ### Hakkında
 
 Sift Uninstaller; masaüstü programlarını, Microsoft Store uygulamalarını ve Windows bileşenlerini tek arayüzde yönetmenize yardımcı olan bir Windows masaüstü uygulamasıdır. Kurulu yazılımları Windows Registry ve AppX bilgilerinden listeler, yerel kaldırıcıları çalıştırır ve ayrı bir aşamada kullanıcı onaylı kalıntı temizliği sunar.
 
-Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel kaynak kod sürümü **0.5.1.13**'tür. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır. Geliştirme sürümleri genel “latest release” bağlantısında görünmeyebilir; yukarıdaki sürüme özel indirme bağlantısını kullanın. Bu bir geliştirme sürümüdür; üretim kullanımına hazır olduğu iddia edilmez.
+Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel sürüm **0.5.1.18**'dir. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır. Geliştirme sürümleri genel “latest release” bağlantısında görünmeyebilir; yukarıdaki sürüme özel bağlantıyı kullanın. Bu bir geliştirme sürümüdür; üretim kullanımına hazır olduğu iddia edilmez.
+
+Kısa araç çubuğu, başlığa taşınan kaynak özeti ve geniş pencerelerde birleşik sekme/arama alanı listeye daha çok yer bırakır. Kaynak ayrıntıları listeyi aşağı itmeden açılır; eksik tarama uyarısı ayrıntılar kapalıyken de görünür. Güncel liste sayaçları son tarama anlık görüntüsünden ayrılır. Temizlik tamamlandığında boş seçim kontrolleri yerine sonuç ve o işleme ait yedeklere erişim gösterilir; geri alma yine ayrı onay ve güvenlik kontrolü gerektirir.
+
+Kalıntı adaylarında kaynak, tam veya sadeleştirilmiş ad eşleşmesi ve varsa yayıncı-adı alt yolu gösterilir. Dosya/klasör boyutu güvenlik taraması sırasında ölçülen dosya uzunluklarının toplamıdır; kazanılacak disk alanı garantisi değildir. Registry boyutu ölçülmediği açıkça belirtilir. Ada dayalı sahiplik tahmini kesin doğrulama olarak sunulmaz.
+
+Geri yükleme noktası sonucu en fazla 60 saniye beklenir. Süre dolduğunda Windows işlemi zorla kesilmez, kaldırma otomatik başlamaz; devam/iptal için açık onay gerekir. Çalışan uygulama içinde bekleyen istek tekrar başlatılmaz ve Windows sıklık sınırı uyarısı başarı olarak gösterilmez.
 
 ### Özellikler
 
@@ -138,6 +153,8 @@ Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel kaynak kod 
 - **Tanılama ve görünüm:** kalıcı işlem/hata günlükleri, sistem ve yetki durumu paneli, açık/koyu tema ve Sift'e özel uygulama simgesi.
 - **İşlem geçmişi:** son 100 liste yenileme, kaldırma, kalıntı taraması ve temizlik sonucunu tarih, program adı ve hata ayrıntısıyla yeniden görüntüleme. Demo kayıtları açıkça işaretlenir. Araç çubuğundaki saat simgesinden veya Ayarlar'dan açılır.
 - **Kalıcı tercihler:** geri yükleme noktası, tarama alanı ve sessiz kaldırma seçenekleri tema gibi yerel olarak saklanır.
+- **Yeniden açılışta takip:** çalıştırma komutunu saklamadan program kimliğini ve kaldırıcı PID/başlangıç zamanını kaydetme. Yeniden açılışta yalnızca eşleşen süreç izlenir; sorgu hatası/eksik kayıtta yıkıcı işlemler açık onaya kadar engellenir. Önceki takibin bitmesi temizlik izni vermez.
+- **Yedek yönetimi:** sınırlı incelemeyle boyut gösterimi ve öğe bazında ayrı, geri alınamaz silme onayı. Yalnızca tamamlanmış/geri alınmış, listelemeden beri değişmemiş yedek silinir; kesintili/hatalı kayıt ve özgün/geri alınmış hedef korunur. Otomatik silme yapılmaz.
 
 ### Kurulum ve kullanım
 
@@ -153,8 +170,9 @@ Masaüstü sürümü **64 bit Windows 10 ve Windows 11** için hazırlanır. Pak
 ### Bilinmesi gerekenler
 
 - Kalıntı taraması, ad eşleşmelerini ve belirli alanları kullanır. Tüm diski taramaz; bütün kalıntıları bulmayı veya her ad eşleşmesinin seçilen programa ait olduğunu garanti etmez.
+- Genel Temp/önbellek temizliği veya RAM optimizasyonu içermez. AppData incelemesi, kaldırıldığı doğrulanan programa ilişkin adaylarla sınırlıdır; AppData'yı topluca temizlemez.
 - Temizlik yalnızca mevcut oturumda kaldırıldığı doğrulanan program için açılır; listeyi yenilemek veya uygulamayı yeniden başlatmak bu izni geçersiz kılar. Temizlik öncesi varlık kontrolü, kurulu veya yeniden kurulmuş programın verilerini korumak için tekrarlanır.
-- Beklemeyi bırakmak veya on dakikalık sınırın dolması Windows kaldırmasını **iptal etmez veya geri almaz**; programı listeden çıkarmaz ve temizlik izni vermez. Önce kaldırıcının kendi İptal düğmesini kullanın. Süre, kaldırıcı başlatıldığında başlar; önceki geri yükleme noktası denemesini kapsamaz. Takip, Sift'in başlattığı süreç ve doğrulamayla sınırlıdır; bağımsız başlatılmış alt süreçlerin tamamını kapsamaz. Arayüzü yeniden yüklemek takibi korur; Sift'i tamamen kapatıp açmak bellekteki takibi kaybettirir. Daha sonraki liste yenilemesi gerçek kaldırmayı gösterebilir ancak bırakılan işlem için temizlik izni vermez.
+- Beklemeyi bırakmak veya on dakikalık sınırın dolması Windows kaldırmasını **iptal etmez veya geri almaz**; programı listeden çıkarmaz ve temizlik izni vermez. Önce kaldırıcının kendi İptal düğmesini kullanın. Süre kaldırıcı başlatıldığında başlar. Takip Sift'in başlattığı süreçle sınırlıdır; bağımsız alt süreçleri kapsamaz. Yeniden açılışta PID ile süreç başlangıç zamanı birlikte karşılaştırılır ve kayıtlı kaldırıcı bittiğinde program varlığı sorgulanır; yeniden kullanılan PID takip edilmez. Eksik/bozuk süreç kaydı, Windows'u kontrol ettikten sonra açık kullanıcı onayı gerektirir. Önceki sonuç/çıkış kodu yeniden oluşturulmaz ve temizlik otomatik açılmaz. Önceki takip aktifken salt okunur liste yenileme de engellenebilir.
 - Seçilen dosya/klasörler uygulamanın kullanıcı verisi dizinindeki `cleanup-backups` alanına taşınır; Registry anahtarları silinmeden önce burada dışa aktarılır. **Ayarlar → Temizlik Yedeklerini Geri Al** ekranından doğrulanmış yedeği inceleyip açık onayla geri alabilirsiniz. Bu işlem programı değil, veriyi geri getirir. Mevcut hedef bilerek ezilmez veya birleştirilmez; kısmi geri alma verisi ve yedek inceleme için korunur. Eski biçimdeki yedekler diskte kalır ancak otomatik içe aktarılmaz. Farklı diskler arasındaki taşıma özgün veriyi silmek yerine başarısız olabilir. Yedekler otomatik silinmez; disk alanını takip edin.
 - Dosya ağacı kimlikleri ve Registry dışa aktarım özetleri taramayla karşılaştırılır; belirsiz uygulama/ortak kök adları elenir. Bunlar yanlış temizliği azaltır, ancak ada dayalı tarama sahipliği kanıtlamaz. Yol kontrolü/taşıma ve Registry kontrolü/içe aktarma/silme, başka süreçlerin hedefi değiştirmesine karşı atomik bir Windows işlemi değildir. Temizlik/geri alma sırasında dışarıdan kurulum veya veri değiştiren araçlar çalıştırmayın; önemli verileri ayrıca yedekleyin.
 - Otomatik masaüstü kaldırma yerel mutlak EXE yollarını ve MSI komutlarını destekler. Komut yorumlayıcıları, betikler, ağ EXE yolları ve hatalı tırnaklama reddedilir; desteklenmeyen kaldırıcıları Windows üzerinden çalıştırın. Komut kabuğuyla alternatif çalıştırma yapılmaz.
@@ -165,6 +183,7 @@ Masaüstü sürümü **64 bit Windows 10 ve Windows 11** için hazırlanır. Pak
 - Günlükler ve geçmiş, uygulama adları ile yerel yollar içerebilir. Geçmiş bu cihazda saklanır, son 100 sonuçla sınırlıdır ve çok uzun ayrıntıları kısaltır; yedek veya eksiksiz denetim kaydı değildir. Yerel depolama kullanılamıyorsa yeni geçmişin yalnızca oturumda tutulduğu açıkça belirtilir. Paylaşmadan önce kayıtları inceleyin.
 - Masaüstü günlükleri yakalanmamış arayüz hatalarını, işlenmemiş Promise hatalarını, React çizim hatalarını, arayüz yükleme/işlem kapanma hatalarını ve arayüz konsolundaki hataları (başlangıç modül/MIME hataları dahil) kaydeder. Kayıtlar yereldir, boyut/sıklık sınırı vardır ve dışarı yüklenmez. Kurtarma ekranı açık Windows kaldırıcısını durdurmaz; eksik bir paket dosyası bu ekranın da yüklenmesini engelleyebilir.
 - Store adları manifest/kaynak erişimine bağlıdır; çözülemeyen kaynaklarda teknik ad korunur ve bilgi uyarısı gösterilir. Simgeler ağ yollarından değil, yerel dosyalardan okunur. Eksik/erişilemeyen simgelerde ve varsayılan dışı DLL simge indekslerinde harf veya dosyanın varsayılan simgesi kalabilir.
+- Kalıntı tarama/silme veya yedek geri alma öncesinde yeni, tam envanterle benzer ürün/yayıncı adları ve çakışan kurulum konumları kontrol edilir. Bir kaynak okunamazsa bu işlemler engellenir. Bu koruma kalıntı sahipliğini kanıtlamaz. Yedek silme yalnızca UUID yedek klasörüne uygulanır; kayıttaki özgün hedefe dokunulmaz. Dış süreçlerin eşzamanlı değişikliklerine karşı atomik garanti yoktur.
 
 ### Geliştirme
 
