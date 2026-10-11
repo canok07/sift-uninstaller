@@ -22,6 +22,28 @@ The project is under active development in the **0.5 series**. The current versi
 
 System Restore waits are limited to 60 seconds. A timeout does not kill the Windows transaction or automatically start uninstalling: explicit continue/cancel confirmation is required. A pending request is not duplicated within the running app, and Windows frequency-limit warnings are failures rather than false success.
 
+### Screenshots
+
+Captured from the 0.5.1.18 interface using demo/sample data. The interface is currently Turkish. These are UI previews, not evidence of an actual uninstall or cleanup; no personal inventory or user files are shown. The desktop build reads real Windows data, while the browser demo does not.
+
+**Program list — dark theme**
+
+![Sift Uninstaller program list in dark theme with demo data](docs/screenshots/program-list-dark.png)
+
+<details>
+<summary>Program list — light theme</summary>
+
+![Sift Uninstaller program list in light theme with demo data](docs/screenshots/program-list-light.png)
+
+</details>
+
+<details>
+<summary>Leftover review — explanations and opt-in selection</summary>
+
+![Sift Uninstaller leftover review showing sample candidates and unselected checkboxes](docs/screenshots/leftover-review.png)
+
+</details>
+
 ### Features
 
 - **Organized application list:** separate tabs for Desktop Programs, Store Apps and Windows Components, plus an all-apps view.
@@ -135,6 +157,10 @@ Kısa araç çubuğu, başlığa taşınan kaynak özeti ve geniş pencerelerde 
 Kalıntı adaylarında kaynak, tam veya sadeleştirilmiş ad eşleşmesi ve varsa yayıncı-adı alt yolu gösterilir. Dosya/klasör boyutu güvenlik taraması sırasında ölçülen dosya uzunluklarının toplamıdır; kazanılacak disk alanı garantisi değildir. Registry boyutu ölçülmediği açıkça belirtilir. Ada dayalı sahiplik tahmini kesin doğrulama olarak sunulmaz.
 
 Geri yükleme noktası sonucu en fazla 60 saniye beklenir. Süre dolduğunda Windows işlemi zorla kesilmez, kaldırma otomatik başlamaz; devam/iptal için açık onay gerekir. Çalışan uygulama içinde bekleyen istek tekrar başlatılmaz ve Windows sıklık sınırı uyarısı başarı olarak gösterilmez.
+
+### Ekran görüntüleri
+
+[Yukarıdaki ekran görüntülerini inceleyin](#screenshots): koyu tema, açık tema ve kalıntı inceleme ekranı. Görseller 0.5.1.18 arayüzünden demo/örnek verilerle alınmıştır; kişisel program listesi veya kullanıcı dosyaları gösterilmez. Gerçek kaldırma/temizlik yapıldığının kanıtı değildir. Masaüstü sürümü gerçek Windows verisini okur; tarayıcı demosu okumaz.
 
 ### Özellikler
 
