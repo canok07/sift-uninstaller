@@ -37,7 +37,9 @@ import { describeScan, describeInventory } from '../utils/operationResults';
 import { APP_VERSION } from '../version';
 import { confirmRestoreFailure, describeUninstall, hasVerifiedRemoval, uninstallStageLabel, type UninstallStage } from '../utils/uninstallFlow';
 import { RESTORE_POINT_WAIT_MS } from '../operationLimits';
-import { readSettings, saveSettings } from '../utils/settings';
+import { readSettingsState, saveSettings } from '../utils/settings';
+import { browserStorage } from '../utils/theme';
+import { openLogFolderSafely } from '../utils/logFolder';
 import { inventoryCounts } from '../utils/inventoryCounts';
 import type { 
   InstalledProgram, 
@@ -219,11 +221,13 @@ interface FluentUninstallerSimulatorProps {
   onSwitchToCode?: (lang: 'pyqt5' | 'wpf') => void;
   isDarkMode?: boolean;
   onToggleDarkMode?: () => void;
+  themeStorageIssue?: boolean;
 }
 
 export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProps> = ({ 
   isDarkMode = false,
-  onToggleDarkMode
+  onToggleDarkMode,
+  themeStorageIssue = false
 }) => {
   const isMountedRef = useRef(true);
   const timeoutIdsRef = useRef<number[]>([]);
@@ -347,16 +351,19 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   const dark = onToggleDarkMode ? isDarkMode : localDarkMode;
 
   // Ayarlar Seçenekleri
-  const [initialSettings] = useState(() => {
-    try { return readSettings(window.localStorage); } catch { return readSettings(); }
-  });
-  const [settingCreateRestorePoint, setSettingCreateRestorePoint] = useState(initialSettings.restorePoint);
-  const [settingScanRegistry, setSettingScanRegistry] = useState(initialSettings.scanRegistry);
-  const [settingScanAppData, setSettingScanAppData] = useState(initialSettings.scanAppData);
-  const [settingSilentUninstall, setSettingSilentUninstall] = useState(initialSettings.silent);
+  const [initialSettings] = useState(() => readSettingsState(browserStorage()));
+  const [settingsStorageIssue, setSettingsStorageIssue] = useState(false);
+  const [isOpeningLogs, setIsOpeningLogs] = useState(false);
+  const [logFolderMessage, setLogFolderMessage] = useState('');
+  const [settingCreateRestorePoint, setSettingCreateRestorePoint] = useState(initialSettings.settings.restorePoint);
+  const [settingScanRegistry, setSettingScanRegistry] = useState(initialSettings.settings.scanRegistry);
+  const [settingScanAppData, setSettingScanAppData] = useState(initialSettings.settings.scanAppData);
+  const [settingSilentUninstall, setSettingSilentUninstall] = useState(initialSettings.settings.silent);
+  const persistSettings = () => saveSettings(browserStorage(), { restorePoint: settingCreateRestorePoint,
+    scanRegistry: settingScanRegistry, scanAppData: settingScanAppData, silent: settingSilentUninstall });
   useEffect(() => {
-    try { saveSettings(window.localStorage, { restorePoint: settingCreateRestorePoint,
-      scanRegistry: settingScanRegistry, scanAppData: settingScanAppData, silent: settingSilentUninstall }); } catch { /* Storage unavailable. */ }
+    setSettingsStorageIssue(!saveSettings(browserStorage(), { restorePoint: settingCreateRestorePoint,
+      scanRegistry: settingScanRegistry, scanAppData: settingScanAppData, silent: settingSilentUninstall }));
   }, [settingCreateRestorePoint, settingScanRegistry, settingScanAppData, settingSilentUninstall]);
 
   // Sıralama (Sort)
@@ -1488,7 +1495,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       {/* ========================================================================= */}
       {isSettingsOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#16181C] rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-2xl max-w-lg w-full p-5 space-y-4">
+          <div role="dialog" aria-modal="true" aria-label="Ayarlar" className="bg-white dark:bg-[#16181C] rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-2xl max-w-lg max-h-[85vh] overflow-y-auto w-full p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-3">
               <div className="flex items-center gap-2">
                 <Settings className="w-5 h-5 text-sky-600 dark:text-sky-400" />
@@ -1503,6 +1510,11 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
             </div>
 
             <div className="space-y-3 text-xs">
+              {initialSettings.issue && <p role="status" className="text-amber-700 dark:text-amber-300">{initialSettings.issue}</p>}
+              {(settingsStorageIssue || themeStorageIssue) && <p role="status" className="rounded-lg bg-amber-500/10 p-3 text-amber-700 dark:text-amber-300">
+                {settingsStorageIssue && 'Ayarlar kaydedilemiyor; seçiminiz yalnızca bu oturumda geçerli. '}
+                {themeStorageIssue && 'Tema tercihi kaydedilemiyor; gece/gündüz modu bu oturumda çalışmaya devam eder.'}
+              </p>}
               <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200/80 dark:border-zinc-800 hover:bg-slate-50 dark:hover:bg-zinc-800/50 cursor-pointer">
                 <div>
                   <div className="font-semibold text-slate-800 dark:text-zinc-100">Sistem Geri Yükleme Noktası</div>
@@ -1574,14 +1586,17 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                 </div>
                 <button
                   type="button"
+                  disabled={isOpeningLogs}
                   onClick={async () => {
-                    if (!window.api?.openLogFolder) {
-                      setNotification({ text: 'Log klasörü yalnızca masaüstü uygulamasında açılabilir.', type: 'error' });
-                      return;
-                    }
-                    const result = await window.api.openLogFolder();
+                    if (isOpeningLogs) return;
+                    setIsOpeningLogs(true);
+                    setLogFolderMessage('');
+                    const result = await openLogFolderSafely(window.api);
+                    if (!isMountedRef.current) return;
+                    setIsOpeningLogs(false);
+                    setLogFolderMessage(result.message);
                     setNotification({
-                      text: result.success ? 'Log dosyasının bulunduğu klasör açıldı.' : `Log klasörü açılamadı: ${result.error || 'Bilinmeyen hata'}`,
+                      text: result.message,
                       type: result.success ? 'success' : 'error'
                     });
                     safeSetTimeout(() => setNotification(null), 3500);
@@ -1589,16 +1604,19 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                   className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-slate-700 dark:text-zinc-200 hover:text-sky-600 dark:hover:text-sky-400 hover:border-sky-300 dark:hover:border-sky-700 transition-colors cursor-pointer"
                 >
                   <FolderOpen className="w-4 h-4" />
-                  <span>Logları Aç</span>
+                  <span>{isOpeningLogs ? 'Açılıyor…' : 'Logları Aç'}</span>
                 </button>
               </div>
+              {logFolderMessage && <p role="status" className="text-slate-600 dark:text-zinc-300">{logFolderMessage}</p>}
             </div>
 
             <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-zinc-800">
               <button
                 onClick={() => {
+                  const saved = persistSettings();
+                  setSettingsStorageIssue(!saved);
                   setIsSettingsOpen(false);
-                  setNotification({ text: 'Ayarlar başarıyla güncellendi.', type: 'success' });
+                  setNotification({ text: saved ? 'Ayarlar başarıyla kaydedildi.' : 'Ayarlar kaydedilemedi; yalnızca bu oturumda geçerli.', type: saved ? 'success' : 'error' });
                   safeSetTimeout(() => setNotification(null), 2500);
                 }}
                 className="px-5 py-2 rounded-xl text-xs font-semibold bg-sky-500 hover:bg-sky-600 text-white transition-colors cursor-pointer"

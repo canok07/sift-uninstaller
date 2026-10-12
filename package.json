@@ -1,7 +1,7 @@
 {
   "name": "sift-uninstaller",
   "private": true,
-  "version": "0.5.1-19",
+  "version": "0.5.1-20",
   "license": "MIT",
   "author": "Sift Uninstaller",
   "description": "Windows Registry tabanlı modern program kaldırıcı ve kalıntı temizleyici masaüstü uygulaması",

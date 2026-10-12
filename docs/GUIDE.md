@@ -18,7 +18,7 @@ This is an **unsigned development release**. Windows may show an unknown-publish
 
 Sift Uninstaller brings desktop programs, Microsoft Store apps and Windows components into one interface. It uses Windows Registry and AppX information to list installed software, launches native uninstallers and offers a separate, user-reviewed cleanup step.
 
-The project is under active development in the **0.5 series**. The current version is **0.5.1.18**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases). Development prereleases may not appear at the generic “latest release” link; use the versioned download above. This is a development release, not a claim of production readiness.
+The project is under active development in the **0.5 series**. Local source is **0.5.1.20**; the published installer remains **0.5.1.18**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases). Development prereleases may not appear at the generic “latest release” link; use the versioned download above. This is a development release, not a claim of production readiness.
 
 System Restore waits are limited to 60 seconds. A timeout does not kill the Windows transaction or automatically start uninstalling: explicit continue/cancel confirmation is required. A pending request is not duplicated within the running app, and Windows frequency-limit warnings are failures rather than false success.
 
@@ -65,7 +65,7 @@ Captured from the 0.5.1.18 interface using demo/sample data. The interface is cu
 - **Optional uninstall settings:** attempt a Windows restore point before removal and enable silent options for recognized MSI, Inno Setup and NSIS uninstallers.
 - **Diagnostics and appearance:** persistent operation/error logs, a system/permission status panel, light/dark themes and a dedicated Sift application icon.
 - **Operation history:** reopen the last 100 list-refresh, uninstall, leftover-scan and cleanup results, including timestamps, app names and error details. Demo results are explicitly labelled. Open History from the toolbar clock or Settings.
-- **Persistent preferences:** restore-point, scan-area and silent-uninstall options are saved locally alongside the theme.
+- **Persistent preferences:** restore-point, scan-area and silent-uninstall options are saved locally alongside the theme. If storage is blocked or full, preferences still work for the session and Settings shows a warning; save failure is never reported as success. Malformed settings use safe defaults. Theme switching continues without storage access. Log-opening failures remain visible in Settings and the interface-recovery screen.
 - **Restart-aware monitoring:** persist the selected program identity and launched process PID/start time without saving executable commands. On restart, follow only the matching process; process-query failures or incomplete records keep destructive actions blocked until explicit acknowledgement. Finishing recovered tracking never grants cleanup.
 - **Backup management:** display bounded backup sizes and offer a separate, irreversible per-item delete confirmation. Only completed/restored backups with unchanged list-time identity can be deleted; interrupted/failed records and original/restored targets are preserved. No automatic purge.
 
@@ -152,7 +152,7 @@ Bu, **dijital imzası olmayan bir geliştirme sürümüdür**. Windows bilinmeye
 
 Sift Uninstaller; masaüstü programlarını, Microsoft Store uygulamalarını ve Windows bileşenlerini tek arayüzde yönetmenize yardımcı olan bir Windows masaüstü uygulamasıdır. Kurulu yazılımları Windows Registry ve AppX bilgilerinden listeler, yerel kaldırıcıları çalıştırır ve ayrı bir aşamada kullanıcı onaylı kalıntı temizliği sunar.
 
-Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel sürüm **0.5.1.18**'dir. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır. Geliştirme sürümleri genel “latest release” bağlantısında görünmeyebilir; yukarıdaki sürüme özel bağlantıyı kullanın. Bu bir geliştirme sürümüdür; üretim kullanımına hazır olduğu iddia edilmez.
+Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Yerel kaynak **0.5.1.20**; yayımlanan kurulum **0.5.1.18**'dir. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır. Geliştirme sürümleri genel “latest release” bağlantısında görünmeyebilir; yukarıdaki sürüme özel bağlantıyı kullanın. Bu bir geliştirme sürümüdür; üretim kullanımına hazır olduğu iddia edilmez.
 
 Kısa araç çubuğu, başlığa taşınan kaynak özeti ve geniş pencerelerde birleşik sekme/arama alanı listeye daha çok yer bırakır. Kaynak ayrıntıları listeyi aşağı itmeden açılır; eksik tarama uyarısı ayrıntılar kapalıyken de görünür. Güncel liste sayaçları son tarama anlık görüntüsünden ayrılır. Temizlik tamamlandığında boş seçim kontrolleri yerine sonuç ve o işleme ait yedeklere erişim gösterilir; geri alma yine ayrı onay ve güvenlik kontrolü gerektirir.
 
@@ -182,7 +182,7 @@ Geri yükleme noktası sonucu en fazla 60 saniye beklenir. Süre dolduğunda Win
 - **İsteğe bağlı kaldırma ayarları:** kaldırma öncesinde Windows geri yükleme noktası oluşturmayı deneme; tanınan MSI, Inno Setup ve NSIS kaldırıcıları için sessiz seçenekler.
 - **Tanılama ve görünüm:** kalıcı işlem/hata günlükleri, sistem ve yetki durumu paneli, açık/koyu tema ve Sift'e özel uygulama simgesi.
 - **İşlem geçmişi:** son 100 liste yenileme, kaldırma, kalıntı taraması ve temizlik sonucunu tarih, program adı ve hata ayrıntısıyla yeniden görüntüleme. Demo kayıtları açıkça işaretlenir. Araç çubuğundaki saat simgesinden veya Ayarlar'dan açılır.
-- **Kalıcı tercihler:** geri yükleme noktası, tarama alanı ve sessiz kaldırma seçenekleri tema gibi yerel olarak saklanır.
+- **Kalıcı tercihler:** geri yükleme noktası, tarama alanı ve sessiz kaldırma seçenekleri tema gibi yerel olarak saklanır. Kayıt alanı engelli veya doluysa tercihler oturum içinde çalışır ve Ayarlar'da uyarı gösterilir; kayıt hatası başarı olarak sunulmaz. Bozuk ayarlarda güvenli varsayılanlar kullanılır. Tema değişimi kayıt erişimi olmadan da çalışır. Log klasörü açma hataları Ayarlar'da ve arayüz kurtarma ekranında görünür kalır.
 - **Yeniden açılışta takip:** çalıştırma komutunu saklamadan program kimliğini ve kaldırıcı PID/başlangıç zamanını kaydetme. Yeniden açılışta yalnızca eşleşen süreç izlenir; sorgu hatası/eksik kayıtta yıkıcı işlemler açık onaya kadar engellenir. Önceki takibin bitmesi temizlik izni vermez.
 - **Yedek yönetimi:** sınırlı incelemeyle boyut gösterimi ve öğe bazında ayrı, geri alınamaz silme onayı. Yalnızca tamamlanmış/geri alınmış, listelemeden beri değişmemiş yedek silinir; kesintili/hatalı kayıt ve özgün/geri alınmış hedef korunur. Otomatik silme yapılmaz.
 

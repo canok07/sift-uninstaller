@@ -15,7 +15,7 @@ Sift brings desktop programs, Microsoft Store apps and Windows components into o
 - Cleanup backups, operation history and local error logs.
 - Light and dark themes.
 
-Windows 10/11 x64 · Source **0.5.1.19** · Published setup 0.5.1.18 · No Node.js required
+Windows 10/11 x64 · Source **0.5.1.20** · Published setup 0.5.1.18 · No Node.js required
 
 Unsigned development release; real MSI, recovery/reinstall and installer acceptance tests remain pending. Name-based leftover matches need your review. General Temp cleaning and RAM optimization are not included.
 
@@ -44,7 +44,7 @@ Windows'taki programlarınız tek yerde. **Sift**, masaüstü programlarını, S
 - Temizlik yedekleri, işlem geçmişi ve yerel hata kayıtları.
 - Açık ve koyu tema.
 
-Windows 10/11 x64 · Kaynak **0.5.1.19** · Yayımlanan setup 0.5.1.18 · Node.js gerekmez
+Windows 10/11 x64 · Kaynak **0.5.1.20** · Yayımlanan setup 0.5.1.18 · Node.js gerekmez
 
 [Kurulum dosyasını indir](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.18/Sift.Uninstaller-Setup-0.5.1.18.exe) · [Ekran görüntüleri](#screenshots)
 

@@ -19,7 +19,9 @@ import { RestorePointWait } from '../electron/restorePointWait';
 import { RESTORE_POINT_WAIT_MS } from '../src/operationLimits';
 import { UninstallTask, UNINSTALL_TIMEOUT_MS } from '../electron/uninstallTask';
 import { UninstallMonitor, CancelWaitModal } from '../src/components/UninstallMonitor';
-import { readSettings, saveSettings, defaultSettings } from '../src/utils/settings';
+import { readSettings, readSettingsState, saveSettings, defaultSettings } from '../src/utils/settings';
+import { readTheme, saveTheme } from '../src/utils/theme';
+import { openLogFolderSafely } from '../src/utils/logFolder';
 import { readHistory, appendHistory, HISTORY_KEY, HISTORY_LIMIT } from '../src/utils/operationHistory';
 import { OperationHistoryModal } from '../src/components/OperationHistoryModal';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -758,9 +760,9 @@ test('package, UI and builder describe the same Windows release', () => {
   const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
   assert.equal(require('semver').valid(manifest.version), manifest.version);
   assert.equal(manifest.version, lock.version);
-  assert.equal(APP_VERSION, '0.5.1.19');
+  assert.equal(APP_VERSION, '0.5.1.20');
   assert.equal(config.buildVersion, APP_VERSION);
-  assert.equal(config.buildNumber, '19');
+  assert.equal(config.buildNumber, '20');
   assert.equal(config.extraMetadata.shortVersionWindows, APP_VERSION);
   assert.ok(config.nsis.artifactName.includes('$' + '{buildVersion}'));
   assert.equal(manifest.license, 'MIT');
@@ -870,6 +872,59 @@ test('settings persist validated values and restore failure respects cancel or e
   const continued = await confirmRestoreFailure(async () => { throw new Error('Denied'); }, async error => error === 'Denied');
   assert.equal(continued.proceed, true);
   assert.equal(continued.warning, 'Denied');
+});
+
+test('settings storage failures are explicit and malformed settings fall back to safe defaults', () => {
+  const denied = { getItem() { throw new Error('Denied'); }, setItem() { throw new Error('Full'); } };
+  for (const storage of [undefined, denied]) {
+    assert.deepEqual(readSettingsState(storage).settings, defaultSettings);
+    assert.match(readSettingsState(storage).issue!, /güvenli varsayılan/);
+    assert.equal(saveSettings(storage, defaultSettings), false);
+  }
+  const storage = memoryStorage();
+  assert.equal(readSettingsState(storage).issue, undefined);
+  for (const raw of ['{', 'null', '[]', '{"version":2}', '{"version":1,"restorePoint":"false","silent":true}']) {
+    storage.setItem('sift_settings', raw);
+    const result = readSettingsState(storage);
+    assert.deepEqual(result.settings, defaultSettings);
+    assert.match(result.issue!, /güvenli varsayılan/);
+    assert.equal(result.settings.restorePoint, true);
+    assert.equal(result.settings.silent, false);
+  }
+  assert.equal(saveSettings(storage, { ...defaultSettings, silent: true }), true);
+  assert.equal(readSettingsState(storage).issue, undefined);
+  assert.equal(readSettingsState(storage).settings.silent, true);
+});
+
+test('theme storage denial and invalid preferences preserve system fallback and never throw', () => {
+  const denied = { getItem() { throw new Error('Denied'); }, setItem() { throw new Error('Full'); } };
+  for (const dark of [false, true]) {
+    for (const storage of [undefined, denied]) {
+      assert.equal(readTheme(storage, dark), dark);
+      assert.equal(saveTheme(storage, dark), false);
+    }
+  }
+  const storage = memoryStorage();
+  storage.setItem('sift_theme', 'invalid');
+  assert.equal(readTheme(storage, true), true);
+  assert.equal(readTheme(storage, false), false);
+  assert.equal(saveTheme(storage, true), true);
+  assert.equal(readTheme(storage, false), true);
+  assert.equal(saveTheme(storage, false), true);
+  assert.equal(readTheme(storage, true), false);
+});
+
+test('log folder feedback distinguishes success, refusal, missing bridge and rejected IPC', async () => {
+  assert.equal((await openLogFolderSafely({ openLogFolder: async () => ({ success: true }) })).success, true);
+  const refused = await openLogFolderSafely({ openLogFolder: async () => ({ success: false, error: '<Access denied>' }) });
+  assert.equal(refused.success, false);
+  assert.match(refused.message, /Access denied/);
+  for (const bridge of [undefined, { openLogFolder: async () => { throw new Error('private transport details'); } }]) {
+    const result = await openLogFolderSafely(bridge);
+    assert.equal(result.success, false);
+    assert.match(result.message, /Log klasörü/);
+    assert.ok(!result.message.includes('private transport details'));
+  }
 });
 
 function inventoryEnvelope(programs: any[] = [appRecord], failed: string[] = []) {

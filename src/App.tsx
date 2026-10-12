@@ -5,19 +5,18 @@
 
 import React, { useState, useEffect } from 'react';
 import { FluentUninstallerSimulator } from './components/FluentUninstallerSimulator';
+import { browserStorage, readTheme, saveTheme } from './utils/theme';
 
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('sift_theme');
-      if (saved) return saved === 'dark';
-      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+      return readTheme(browserStorage(), window.matchMedia('(prefers-color-scheme: dark)').matches);
     }
     return false;
   });
+  const [themeStorageIssue, setThemeStorageIssue] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem('sift_theme', isDarkMode ? 'dark' : 'light');
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
       document.body.style.backgroundColor = '#000000';
@@ -25,6 +24,7 @@ export default function App() {
       document.documentElement.classList.remove('dark');
       document.body.style.backgroundColor = '#f1f5f9';
     }
+    setThemeStorageIssue(!saveTheme(browserStorage(), isDarkMode));
   }, [isDarkMode]);
 
   const toggleDarkMode = () => setIsDarkMode((prev) => !prev);
@@ -36,7 +36,7 @@ export default function App() {
       <div className={`w-full h-full flex flex-col flex-1 overflow-hidden transition-colors duration-200 ${
         isDarkMode ? 'bg-black' : 'bg-[#f1f5f9]'
       }`}>
-        <FluentUninstallerSimulator isDarkMode={isDarkMode} onToggleDarkMode={toggleDarkMode} />
+        <FluentUninstallerSimulator isDarkMode={isDarkMode} onToggleDarkMode={toggleDarkMode} themeStorageIssue={themeStorageIssue} />
       </div>
     </div>
   );

@@ -17,6 +17,8 @@ Tracks the agreed easy-to-hard development order. Steps 1–5 were implemented i
 
 GitHub code/EXE publication is a separate action requiring approval. Keep fixture-based checks distinct from real removal/UAC/installer tests.
 
+Additional local work: read-only Registry review added in 0.5.1.19; storage-denial theme recovery, honest settings-save feedback and visible log-opening failures fixed in 0.5.1.20. These do not replace the remaining real acceptance tests in steps 7–9. Temp/AppData/RAM cleaning remains outside this package.
+
 ## Türkçe
 
 Kararlaştırılan kolaydan zora geliştirme sırasını korur. 1–5, 0.5.1.16'da; 6, 0.5.1.17'de; üst alanın ilave küçültülmesi 0.5.1.18'de uygulandı. Bu aşamalar 0.5.1.18 geliştirme sürümünde birlikte yer alır; gerçek kullanıcı kabul testi kanıtı değildir. Gerçek ana sistem kurulumu/kaldırması açık ve sınırlı onay gerektirir; ilave testler otomatik başlatılmaz.
@@ -33,3 +35,5 @@ Kararlaştırılan kolaydan zora geliştirme sırasını korur. 1–5, 0.5.1.16'
 10. Dijital imza — mevcut çalışma kapsamı dışında; sertifika satın alma veya imza yapılandırma yetkisi yok.
 
 GitHub'a kod/EXE yayını ayrı onay ister. Test dosyalarıyla yapılan kontroller, gerçek kaldırma/UAC/kurulum testleri olarak sunulmaz.
+
+İlave yerel çalışma: 0.5.1.19'da salt okunur Registry kontrolü; 0.5.1.20'de kayıt erişimi engelliyken tema kurtarma, doğru ayar kaydetme bildirimi ve görünür log açma hataları. Bunlar 7–9'daki gerçek kabul testlerinin yerine geçmez. Temp/AppData/RAM temizliği bu pakette yoktur.

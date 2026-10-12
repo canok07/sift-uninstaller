@@ -322,7 +322,58 @@ function paintedBackground(dark) {
   win.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 350));
   if (latestFrame) fs.writeFileSync(path.join(output, 'candidate-details-preview.png'), latestFrame.toPNG());
   await win.webContents.executeJavaScript("document.querySelector('#candidate-preview button[title=\"Kapat\"]').click()");
+  // Fault injection only in a new, hidden demo window with no production preload.
+  // Block the storage getter itself, not just getItem/setItem, before mounting App.
+  const storagePreview = require('esbuild').buildSync({ entryPoints: [path.join(root, 'tests/fixtures/storage-preview.tsx')],
+    bundle: true, platform: 'browser', format: 'iife', globalName: 'SiftStoragePreview',
+    define: { 'process.env.NODE_ENV': '"production"' }, write: false, logLevel: 'silent' }).outputFiles[0].text;
+  const storageWin = new BrowserWindow({ show: false, width: 960, height: 640,
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, offscreen: true } });
+  try {
+    await storageWin.loadURL('about:blank');
+    const cssAsset = fs.readdirSync(path.join(assetRoot, 'dist', 'assets')).find(name => name.endsWith('.css'));
+    await storageWin.webContents.insertCSS(fs.readFileSync(path.join(assetRoot, 'dist', 'assets', cssAsset), 'utf8'));
+    await storageWin.webContents.executeJavaScript(`Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new Error('SIFT_STORAGE_DENIED'); } });
+      window.api = { openLogFolder: async () => { throw new Error('SIFT_BRIDGE_REJECTION'); } }; void 0;`);
+    await storageWin.webContents.executeJavaScript(storagePreview + '\nSiftStoragePreview.mountStoragePreview();');
+    const inPreview = script => storageWin.webContents.executeJavaScript(script);
+    await waitFor(() => inPreview("Boolean(document.querySelector('table'))"), 'demo renderer with denied storage');
+    const originalDark = await inPreview("document.documentElement.classList.contains('dark')");
+    await inPreview("Array.from(document.querySelectorAll('button')).find(b => b.title.includes('Moda Geç') || b.title.includes('Moduna Geç')).click()");
+    await waitFor(() => inPreview("document.documentElement.classList.contains('dark') !== " + originalDark), 'theme works without storage');
+    await inPreview("document.querySelector('button[title=\"Gelişmiş Yapılandırma Ayarları\"]').click()");
+    await waitFor(() => inPreview("document.body.innerText.includes('Ayarlar kaydedilemiyor') && document.body.innerText.includes('Tema tercihi kaydedilemiyor')"), 'session-only warnings');
+    const settingsLayout = await inPreview(`(() => {
+      const dialog = document.querySelector('[aria-label="Ayarlar"]'), r = dialog.getBoundingClientRect();
+      return {inBounds:r.top >= 0 && r.bottom <= innerHeight, horizontalOverflow:dialog.scrollWidth > dialog.clientWidth};
+    })()`);
+    assert.equal(settingsLayout.inBounds, true); assert.equal(settingsLayout.horizontalOverflow, false);
+    storageWin.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 500));
+    fs.writeFileSync(path.join(output, 'settings-storage-warning-preview.png'), (await storageWin.webContents.capturePage()).toPNG());
+    await inPreview("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Logları Aç').scrollIntoView({block:'center'})");
+    await inPreview("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Logları Aç').click()");
+    await waitFor(() => inPreview("document.querySelector('[aria-label=\"Ayarlar\"]').innerText.includes('Log klasörü açılamadı')"), 'rejected bridge visible inside settings');
+    await inPreview("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Kaydet ve Kapat').scrollIntoView({block:'center'})");
+    assert.equal(await inPreview(`(() => {
+      const button = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Kaydet ve Kapat');
+      const r = button.getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= innerHeight && button.contains(document.elementFromPoint((r.left+r.right)/2, (r.top+r.bottom)/2));
+    })()`), true, 'save button reachable after scrolling');
+    storageWin.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 500));
+    fs.writeFileSync(path.join(output, 'settings-log-error-preview.png'), (await storageWin.webContents.capturePage()).toPNG());
+    await inPreview("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Kaydet ve Kapat').click()");
+    await waitFor(() => inPreview("document.body.innerText.includes('Ayarlar kaydedilemedi; yalnızca bu oturumda geçerli.')"), 'save failure is not a success notification');
+    assert.equal(await inPreview("document.body.innerText.includes('Arayüzde bir hata oluştu')"), false);
+    assert.equal(await inPreview("document.body.innerText.includes('Ayarlar başarıyla kaydedildi.')"), false);
+    await inPreview('SiftStoragePreview.mountErrorPreview();');
+    await waitFor(() => inPreview("document.body.innerText.includes('Arayüzde bir hata oluştu')"), 'recovery UI fixture');
+    await inPreview("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Logları Aç').click()");
+    await waitFor(() => inPreview("document.querySelector('[role=\"status\"]')?.innerText.includes('Log klasörü açılamadı')"), 'recovery UI bridge error stays visible');
+  } finally { storageWin.destroy(); }
   const proof = { version: require('../package.json').version, packagedAssets, sources: inventory.sources,
+    deniedStorageRendererPassed: true, deniedStorageThemeTogglePassed: true,
+    settingsSaveFailureVisible: true, rejectedLogBridgeVisible: true,
+    settingsSmallWindowPassed: true, recoveryLogBridgeFailureVisible: true,
     registryAuditReadOnlyPassed: true, registryAuditBackgroundGatePassed: true,
     registryAuditChecked: latestRegistryAudit.checkedCount, registryAuditFindings: latestRegistryAudit.findings.length,
     registryAuditPartial: latestRegistryAudit.partial,

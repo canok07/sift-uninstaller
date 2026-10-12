@@ -1,5 +1,22 @@
 import React from 'react';
 import { makeErrorReport, reportRendererError } from '../utils/rendererErrors';
+import { openLogFolderSafely } from '../utils/logFolder';
+
+function LogFolderButton() {
+  const [opening, setOpening] = React.useState(false);
+  const [message, setMessage] = React.useState('');
+  const mounted = React.useRef(true);
+  React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  return <div className="space-y-2">
+    <button disabled={opening} className="rounded-lg border px-4 py-2 disabled:opacity-40" onClick={async () => {
+      if (opening) return;
+      setOpening(true); setMessage('');
+      const result = await openLogFolderSafely(window.api);
+      if (mounted.current) { setOpening(false); setMessage(result.message); }
+    }}>{opening ? 'Açılıyor…' : 'Logları Aç'}</button>
+    {message && <p role="status">{message}</p>}
+  </div>;
+}
 
 export class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
   declare props: { children: React.ReactNode };
@@ -15,7 +32,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
         <p>Masaüstü modunda hata günlük dosyasına gönderilmeye çalışılır. Açık bir Windows kaldırıcısı varsa önce onun tamamlanmasını bekleyin; arayüzü yenilemek kaldırıcıyı durdurmaz.</p>
         <div className="flex gap-3">
           <button className="rounded-lg bg-sky-600 text-white px-4 py-2" onClick={() => window.location.reload()}>Arayüzü yeniden aç</button>
-          {window.api && <button className="rounded-lg border px-4 py-2" onClick={() => void window.api?.openLogFolder().catch(() => {})}>Logları Aç</button>}
+          {window.api && <LogFolderButton />}
         </div>
       </section>
     </main>;

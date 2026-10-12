@@ -2,6 +2,12 @@
 
 ## English
 
+### Local version 0.5.1.20
+
+2026-10-12: Windows type checks/builds and all 92 regressions passed. Source and final packaged production Electron checks passed. A separate hidden demo window injects denied storage before mounting the actual App, verifies theme switching, session-only warnings and a failed-save notification, and rejects the log bridge to check visible feedback both in Settings and the error-recovery screen. The Settings dialog stays inside a 960×640 window with no horizontal overflow. Storage utility tests cover denied reads/writes, invalid preferences, safe settings defaults and successful persistence. These fault-injection checks use source components, not a real storage corruption of the user's profile.
+
+Local unsigned setup: `release/0.5.1.20/Sift Uninstaller-Setup-0.5.1.20.exe`, 111,455,518 bytes, FileVersion 0.5.1.20; ASAR npm version 0.5.1-20. Embedded main/preload/HTML match the tested build. SHA-256: `6962E2642B1C22C677FE3BB298225FC89D587F328DA4452B4D9A18ED2255581B`. No live app was closed, installed user program removed, real Registry mutated or user data cleaned. Installer execution/upgrade/UAC acceptance remains untested. This update is local, not a GitHub publication; published setup remains 0.5.1.18.
+
 ### Local version 0.5.1.19
 
 2026-10-12: Type checks/build, all 89 regressions, and source/final packaged Electron checks passed on Windows. The new read-only Registry report was opened and run through the actual renderer/preload/main, and its screenshot inspected. All three Registry sources were readable; 109 installation records produced six findings, with an explicit incomplete-report warning for executable metadata that could not be verified. This is not evidence of obsolete keys or permission to delete them. Tests cover unsupported/missing commands, distinct versions/publishers, cached file probes, record/finding/time limits, source failures, escaped UI text, IPC sender/input checks, unchanged program authorization and blocking during active uninstall tracking.
@@ -40,6 +46,12 @@ Development uses trusted loopback Vite only. Its React refresh preamble needs in
 Reference: [Electron security checklist](https://www.electronjs.org/docs/latest/tutorial/security/).
 
 ## Türkçe
+
+### Yerel 0.5.1.20 sürümü
+
+2026-10-12: Windows tip denetimi/derlemeleri ve 92 regresyonun tamamı geçti. Kaynak ve son paket üretim Electron kontrolleri geçti. Ayrı gizli demo penceresinde gerçek App açılmadan kayıt erişimi engellendi; tema değişimi, oturumluk ayar uyarıları ve başarısız kayıt bildirimi kontrol edildi. Log köprüsü hata verecek şekilde değiştirilerek Ayarlar ve hata kurtarma ekranındaki görünür geri bildirim doğrulandı. Ayarlar penceresi 960×640 boyutta ekran içinde kaldı; yatay taşma olmadı. Yardımcı testler kayıt okuma/yazma engelini, geçersiz tercihleri, güvenli varsayılanları ve başarılı kaydı kapsar. Bu hata benzetimleri kaynak bileşenleri kullanır; kullanıcının profili bozulmadı.
+
+Yerel imzasız setup: `release/0.5.1.20/Sift Uninstaller-Setup-0.5.1.20.exe`, 111.455.518 bayt; FileVersion 0.5.1.20, ASAR npm sürümü 0.5.1-20. Paket ana süreç/köprü/HTML test edilen derlemeyle aynı. SHA-256: `6962E2642B1C22C677FE3BB298225FC89D587F328DA4452B4D9A18ED2255581B`. Açık uygulama kapatılmadı, kurulu kullanıcı programı kaldırılmadı, gerçek Registry değiştirilmedi ve kullanıcı verisi temizlenmedi. Kurulum/yükseltme/canlı UAC kabulü test edilmedi. Bu güncelleme yereldir; GitHub yayını yapılmadı, yayımlanan setup 0.5.1.18 kaldı.
 
 ### Yerel 0.5.1.19 sürümü
 
