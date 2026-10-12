@@ -11,16 +11,17 @@ Sift brings desktop programs, Microsoft Store apps and Windows components into o
 - Separate categories, quick search and sorting.
 - Native Windows uninstalling with removal checks.
 - Leftover review: you choose what to delete.
+- Read-only Registry checks for missing uninstallers, unsupported commands and similar installation records.
 - Cleanup backups, operation history and local error logs.
 - Light and dark themes.
 
-Windows 10/11 x64 · **0.5.1.18** · Setup EXE · No Node.js required
+Windows 10/11 x64 · Source **0.5.1.19** · Published setup 0.5.1.18 · No Node.js required
 
 Unsigned development release; real MSI, recovery/reinstall and installer acceptance tests remain pending. Name-based leftover matches need your review. General Temp cleaning and RAM optimization are not included.
 
 ### Screenshots
 
-Demo/sample data from the current interface, not a real uninstall or cleanup.
+Demo/sample data from the 0.5.1.18 interface, not a real uninstall or cleanup.
 
 ![Sift Uninstaller — organized app list in dark theme](docs/screenshots/program-list-dark.png)
 
@@ -39,10 +40,11 @@ Windows'taki programlarınız tek yerde. **Sift**, masaüstü programlarını, S
 - Ayrı kategoriler, hızlı arama ve sıralama.
 - Windows üzerinden kaldırma ve sonrasında doğrulama.
 - Kalıntıları inceleme; neyin silineceğine siz karar verirsiniz.
+- Eksik kaldırıcıları, desteklenmeyen komutları ve benzer kurulum kayıtlarını gösteren salt okunur Registry kontrolü.
 - Temizlik yedekleri, işlem geçmişi ve yerel hata kayıtları.
 - Açık ve koyu tema.
 
-Windows 10/11 x64 · **0.5.1.18** · Kurulum EXE'si · Node.js gerekmez
+Windows 10/11 x64 · Kaynak **0.5.1.19** · Yayımlanan setup 0.5.1.18 · Node.js gerekmez
 
 [Kurulum dosyasını indir](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.18/Sift.Uninstaller-Setup-0.5.1.18.exe) · [Ekran görüntüleri](#screenshots)
 

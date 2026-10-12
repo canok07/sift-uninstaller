@@ -23,6 +23,7 @@ import { parseUninstallCommand } from './uninstallCommand';
 import { UninstallJournal } from './uninstallJournal';
 import { cleanupConflict, cleanupTerms, leftoverEvidence } from './cleanupOwnership';
 import { RestorePointWait } from './restorePointWait';
+import { inspectRegistryPrograms, registryAuditFailure } from './registryAudit';
 import type { 
   InstalledProgram, 
   InstalledProgramsResult, 
@@ -487,6 +488,28 @@ handleExclusive<InstalledProgramsResult>('programs:get-installed', error => ({ s
 });
 
 // 3. Gerçek Kaldırma İşlemi (Güvenli, doğrulanmış ve asenkron çıkış takibi)
+handleExclusive('registry:inspect', registryAuditFailure, async () => {
+  if (process.platform !== 'win32') return registryAuditFailure('Kayıt defteri kontrolü yalnızca Windows masaüstü sürümünde kullanılabilir.');
+  const { stdout } = await runPowerShell(INVENTORY_SCRIPT, 32 * 1024 * 1024, 30000);
+  const inventory = parseInventory(stdout);
+  const sources = inventory.sources.filter(source => source.id !== 'APPX');
+  if (sources.every(source => source.status === 'error')) return { ...registryAuditFailure('Hiçbir kayıt defteri kaynağı okunamadı.'), sources };
+  const programs = inventory.programs.map(item => ({ ...item, id: getProgramId(item), registryHive: item.hive } as InstalledProgram));
+  const result = await inspectRegistryPrograms(programs, process.env, async file => {
+    try { return (await fs.promises.stat(file)).isFile() ? 'file' : 'missing'; }
+    catch (error: any) { return ['ENOENT', 'ENOTDIR'].includes(error.code) ? 'missing' : 'unreadable'; }
+  });
+  result.sources = sources;
+  for (const source of sources.filter(source => source.status === 'error')) {
+    result.partial = true; result.warnings.push(`${source.id}: ${source.error}`);
+  }
+  writeLog(result.partial ? 'WARN' : 'INFO', 'Salt okunur kayıt defteri kontrolü', {
+    checked: result.checkedCount, findings: result.findings.length, partial: result.partial
+  });
+  // Do not change the inventory cache, confirmed removals, or cleanup session.
+  return result;
+});
+
 async function isProgramStillInstalled(program: InstalledProgram): Promise<boolean> {
   let script: string;
   if (program.category === 'store') {

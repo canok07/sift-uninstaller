@@ -33,6 +33,8 @@ import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { validIPC } from '../electron/ipcSafety';
 import { secureWindow } from '../electron/windowSafety';
 import { parseUninstallCommand } from '../electron/uninstallCommand';
+import { inspectRegistryPrograms, REGISTRY_FINDING_LIMIT, REGISTRY_AUDIT_LIMIT } from '../electron/registryAudit';
+import { RegistryAuditReport } from '../src/components/RegistryAuditModal';
 import { CleanupBackups, validateRegBackup } from '../electron/cleanupBackups';
 import { treeFingerprint, inspectCleanupTree } from '../electron/cleanupSafety';
 import { UninstallJournal } from '../electron/uninstallJournal';
@@ -660,15 +662,105 @@ test('cleanup UI keeps partial failures visible without closing the dialog', asy
   assert.equal(historyResults[0][2], false);
 });
 
+test('Registry inspection diagnoses metadata only and never evaluates commands', async () => {
+  const base = { id: 'audit', displayName: 'ExampleApp', registryKey: 'HKCU\\Software\\Uninstall\\ExampleApp', registryHive: 'HKCU' as const };
+  const programs = [
+    { ...base, id: 'missing' },
+    { ...base, id: 'invalid', uninstallString: 'powershell.exe -Command Remove-Item C:\\Data' },
+    { ...base, id: 'gone', uninstallString: '"C:\\Fixture\\gone.exe" /uninstall' },
+    { ...base, id: 'denied', uninstallString: 'C:\\Fixture\\denied.exe' },
+    { ...base, id: 'quiet', quietUninstallString: '"C:\\Fixture\\safe.exe" /S' },
+    { ...base, id: 'msi', uninstallString: 'MsiExec.exe /X{00000000-0000-0000-0000-000000000000}' },
+    { ...base, id: 'system', category: 'system' as const },
+    { ...base, id: 'store', category: 'store' as const, registryHive: 'APPX' as const }
+  ];
+  const before = JSON.stringify(programs), probes: string[] = [];
+  const result = await inspectRegistryPrograms(programs, { WINDIR: 'C:\\Windows' }, async file => {
+    probes.push(file);
+    return file.endsWith('gone.exe') ? 'missing' : file.endsWith('denied.exe') ? 'unreadable' : 'file';
+  });
+  assert.equal(result.registryCount, 7); assert.equal(result.checkedCount, 7); assert.equal(result.skippedSystemCount, 1);
+  assert.deepEqual(result.findings.map(f => f.code), ['missing-command', 'unsupported-command', 'missing-executable', 'unreadable-executable']);
+  assert.equal(result.partial, true); assert.equal(result.success, true);
+  assert.equal(probes.length, 4); assert.ok(probes.includes('C:\\Windows\\System32\\msiexec.exe'));
+  assert.equal(JSON.stringify(programs), before);
+  assert.ok(!JSON.stringify(result).includes('Remove-Item'), 'raw commands are not returned or evaluated');
+});
+
+test('Registry similar-record hints keep publishers, versions and system/Store entries distinct', async () => {
+  const record = { id: 'one', displayName: 'ExampleApp', publisher: 'ExampleVendor', displayVersion: '1.0',
+    registryHive: 'HKCU' as const, registryKey: 'HKCU\\One', uninstallString: 'C:\\Fixture\\safe.exe' };
+  const rows = [record, { ...record, id: 'two', registryHive: 'HKLM' as const, registryKey: 'HKLM\\Two' },
+    { ...record, id: 'version', displayVersion: '2.0', registryKey: 'HKCU\\Version' },
+    { ...record, id: 'publisher', publisher: 'OtherVendor', registryKey: 'HKCU\\Other' },
+    { ...record, id: 'system', isSystemComponent: true, registryKey: 'HKCU\\System' },
+    { ...record, id: 'unknown', publisher: '', registryKey: 'HKCU\\Unknown' }];
+  let probes = 0;
+  const result = await inspectRegistryPrograms(rows, {}, async () => { probes++; return 'file'; });
+  assert.deepEqual(result.findings.map(f => f.id), ['one:similar-record:', 'two:similar-record:']);
+  assert.match(result.findings[0].message, /otomatik.*silinmez/); assert.equal(probes, 1);
+});
+
+test('Registry audit limits and timeouts produce explicit incomplete reports', async () => {
+  const row = { id: 'audit', displayName: 'ExampleApp', registryHive: 'HKCU' as const };
+  const bounded = await inspectRegistryPrograms(Array.from({ length: REGISTRY_AUDIT_LIMIT + 1 }, (_, i) => ({ ...row, id: String(i) })), {}, async () => { throw new Error('No file probes expected'); });
+  assert.equal(bounded.checkedCount, REGISTRY_AUDIT_LIMIT); assert.equal(bounded.findings.length, REGISTRY_FINDING_LIMIT);
+  assert.equal(bounded.partial, true); assert.equal(bounded.warnings.length, 2);
+  const timed = await inspectRegistryPrograms([{ ...row, uninstallString: 'C:\\Fixture\\slow.exe' }, { ...row, id: 'later' }], {}, () => new Promise(() => {}), 5);
+  assert.equal(timed.partial, true); assert.equal(timed.findings[0].code, 'unreadable-executable');
+  const expired = await inspectRegistryPrograms([row], {}, async () => 'file', 0);
+  assert.equal(expired.checkedCount, 0); assert.equal(expired.partial, true);
+  assert.match(expired.warnings[0], /süre sınırına/);
+});
+
+test('Registry inspect IPC uses fresh read-only inventory and preserves program authorization', async () => {
+  let reads = 0;
+  const executable = path.join(fixtureRoot, 'audit-safe.exe'), iconFile = path.join(fixtureRoot, 'audit-icon.png');
+  fs.writeFileSync(executable, 'fixture, never executable'); fs.writeFileSync(iconFile, 'fixture');
+  const auditRecord = { ...appRecord, uninstallString: `"${executable}"`, displayIcon: iconFile };
+  const sandbox = createMainSandbox(path.join(fixtureRoot, 'registry-audit'), async script => {
+    assert.ok(script.includes('$hives'));
+    assert.ok(!/Remove-Item|Remove-AppxPackage|Start-Process|Checkpoint-Computer|reg\.exe/.test(script));
+    reads++; return JSON.stringify(inventoryEnvelope([auditRecord], ['APPX']));
+  }, undefined, undefined, true, undefined, { setTimeout });
+  const listed = await sandbox.handlers.get('programs:get-installed')!(undefined);
+  const revision = listed.programs[0].revision;
+  const result = await sandbox.handlers.get('registry:inspect')!(undefined);
+  assert.equal(result.success, true); assert.equal(result.partial, false);
+  assert.equal(result.findings.length, 0); assert.equal(reads, 2);
+  assert.equal(result.sources.length, 3); assert.equal(result.sources.some((s: any) => s.id === 'APPX'), false);
+  assert.equal(listed.programs[0].revision, revision);
+  const icon = await sandbox.handlers.get('programs:get-icon')!(undefined, { appId: listed.programs[0].id, revision });
+  assert.ok(icon.dataUrl, 'the same revision remains authorized after the read-only audit');
+  const scan = await sandbox.handlers.get('leftovers:scan')!(undefined, { appId: listed.programs[0].id });
+  assert.equal(scan.success, false); assert.match(scan.error, /Kurulu programın kullanılan verileri kalıntı değildir/);
+  assert.equal(fs.existsSync(sandbox.backupRoot), false);
+});
+
+test('Registry audit source failures stay visible and cannot look like a healthy empty scan', async () => {
+  for (const failed of [['HKLM'], ['HKLM', 'HKCU', 'WOW6432Node']]) {
+    const sandbox = createMainSandbox(path.join(fixtureRoot, 'registry-audit-' + failed.length), async () => JSON.stringify(inventoryEnvelope([], failed)));
+    const result = await sandbox.handlers.get('registry:inspect')!(undefined);
+    assert.equal(result.partial, true); assert.equal(result.success, failed.length === 1);
+    const html = renderToStaticMarkup(React.createElement(RegistryAuditReport, { result }));
+    assert.match(html, /Kontrol eksik/); assert.match(html, /Okunamadı/);
+  }
+  const html = renderToStaticMarkup(React.createElement(RegistryAuditReport, { result: {
+    success: true, scannedAt: new Date().toISOString(), registryCount: 1, checkedCount: 1, skippedSystemCount: 0,
+    findings: [{ id: 'fixture', appName: '<script>bad</script>', registryKey: '<img src=x>', hive: 'HKCU', code: 'missing-command', message: 'İnceleyin.' }], sources: [], warnings: [], partial: false
+  } }));
+  assert.ok(!html.includes('<script>') && !html.includes('<img src=x>'));
+});
+
 test('package, UI and builder describe the same Windows release', () => {
   const config = require(path.resolve('electron-builder.config.cjs'));
   const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
   const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
   assert.equal(require('semver').valid(manifest.version), manifest.version);
   assert.equal(manifest.version, lock.version);
-  assert.equal(APP_VERSION, '0.5.1.18');
+  assert.equal(APP_VERSION, '0.5.1.19');
   assert.equal(config.buildVersion, APP_VERSION);
-  assert.equal(config.buildNumber, '18');
+  assert.equal(config.buildNumber, '19');
   assert.equal(config.extraMetadata.shortVersionWindows, APP_VERSION);
   assert.ok(config.nsis.artifactName.includes('$' + '{buildVersion}'));
   assert.equal(manifest.license, 'MIT');
@@ -1196,6 +1288,8 @@ test('every IPC request rejects unknown fields, wrong types, excess arguments an
   assert.equal(validIPC('leftovers:delete', [{ items: [{ id: 'one', path: 'C:\\Windows' }] }]), false);
   assert.equal(validIPC('leftovers:delete', [{ items: Array.from({ length: 501 }, () => ({ id: 'one' })) }]), false);
   assert.equal(validIPC('programs:get-installed', [{}]), false);
+  assert.equal(validIPC('registry:inspect', []), true);
+  assert.equal(validIPC('registry:inspect', [{ path: 'C:\\Windows', delete: true }]), false);
   assert.equal(validIPC('system:create-restore-point', [{ description: 'a'.repeat(201) }]), false);
   assert.equal(validIPC('leftovers:scan', [{ appId: 'a', options: { scanRegistry: 1 } }]), false);
 });
@@ -1206,7 +1300,7 @@ test('all main handlers reject foreign senders before changing state or invoking
   await sandbox.ready;
   const sender = { sender: {}, senderFrame: { url: 'https://evil.example/' } };
   const payloads: Record<string, any[]> = {
-    'programs:get-installed': [], 'app:get-system-info': [], 'logs:open-folder': [], 'backups:list': [],
+    'programs:get-installed': [], 'registry:inspect': [], 'app:get-system-info': [], 'logs:open-folder': [], 'backups:list': [],
     'programs:uninstall': [{ appId: 'app', options: { expectedRevision: 'rev' } }],
     'leftovers:scan': [{ appId: 'app' }], 'leftovers:delete': [{ items: [] }],
     'backups:restore': [{ id: '00000000-0000-0000-0000-000000000000' }],

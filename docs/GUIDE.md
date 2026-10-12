@@ -46,6 +46,8 @@ Captured from the 0.5.1.18 interface using demo/sample data. The interface is cu
 
 ### Features
 
+- **Read-only Registry review (local 0.5.1.19):** toolbar or Settings → Registry Check. Reviews HKLM, WOW6432Node and current-user HKCU uninstall records, supported local EXE/MSI command metadata, executable availability and same-name/publisher/version registrations. It never runs the commands or changes keys, and cannot authorize cleanup. Store packages and system-component uninstall commands are excluded. Similar records and missing files are not proof that a key is obsolete. Inaccessible files, failed sources, time limits and truncated reports remain explicitly incomplete. Review is limited to 5,000 records, 500 findings and a 20-second file-check budget after inventory (30-second inventory deadline). File probes have a 1.5-second deadline. The published download above remains 0.5.1.18 until a new release is authorized.
+
 - **Organized application list:** separate tabs for Desktop Programs, Store Apps and Windows Components, plus an all-apps view.
 - **Compact workspace and consistent counts:** short action toolbar, source summary in the header, combined tabs/search on wide windows, and current-list counts distinguished from the last scan snapshot. Source details open over the workspace without pushing the list down; incomplete-scan warnings stay visible outside the collapsed details.
 - **Cleanup results and linked backups:** completed cleanup shows its result without empty selection controls. Open the exact backups from that operation; restoring still requires separate confirmation and safety checks.
@@ -163,6 +165,8 @@ Geri yükleme noktası sonucu en fazla 60 saniye beklenir. Süre dolduğunda Win
 [Yukarıdaki ekran görüntülerini inceleyin](#screenshots): koyu tema, açık tema ve kalıntı inceleme ekranı. Görseller 0.5.1.18 arayüzünden demo/örnek verilerle alınmıştır; kişisel program listesi veya kullanıcı dosyaları gösterilmez. Gerçek kaldırma/temizlik yapıldığının kanıtı değildir. Masaüstü sürümü gerçek Windows verisini okur; tarayıcı demosu okumaz.
 
 ### Özellikler
+
+- **Salt okunur Registry kontrolü (yerel 0.5.1.19):** araç çubuğu veya Ayarlar → Kayıt Defteri Kontrolü. HKLM, WOW6432Node ve mevcut kullanıcının HKCU kaldırma kayıtlarını; yerel EXE/MSI komut bilgilerini, kaldırıcı dosyasının varlığını ve aynı ad/yayıncı/sürüm kayıtlarını inceler. Komut çalıştırmaz, anahtar değiştirmez ve temizlik izni vermez. Store paketleri ve sistem bileşenlerinin kaldırma komutları kapsam dışıdır. Benzer kayıt ve eksik dosya gereksiz kayıt kanıtı değildir. Erişim/kaynak hatası, süre sınırı veya kısaltılmış rapor açıkça eksik gösterilir. En fazla 5.000 kayıt, 500 bulgu; envanter sonrası 20 saniye dosya kontrolü (envanter için 30 saniye), dosya başına 1,5 saniye sınırı vardır. Yeni yayın onaylanana kadar yukarıdaki indirme bağlantısı 0.5.1.18 olarak kalır.
 
 - **Düzenli uygulama listesi:** Masaüstü Programları, Store Uygulamaları ve Windows Bileşenleri için ayrı sekmeler; ayrıca tüm uygulamaları gösteren görünüm.
 - **Kaynak bazında tarama:** HKLM, 32 bit Registry, HKCU ve Store/AppX sonuçlarını ayrı gösterme. Bir kaynak okunamazsa erişilebilen kayıtlar korunur ve kalıcı eksik tarama uyarısı görünür; hata, boş başarılı liste gibi gösterilmez.

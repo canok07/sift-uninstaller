@@ -7,7 +7,7 @@ export const uuid = (value: unknown) => typeof value === 'string' && /^[0-9a-f]{
 
 // Reject unknown fields and oversized inputs before touching state or subprocesses.
 export function validIPC(channel: string, args: unknown[]): boolean {
-  if (['programs:get-installed', 'programs:get-uninstall-activity', 'app:get-system-info', 'logs:open-folder', 'backups:list'].includes(channel)) return args.length === 0;
+  if (['programs:get-installed', 'registry:inspect', 'programs:get-uninstall-activity', 'app:get-system-info', 'logs:open-folder', 'backups:list'].includes(channel)) return args.length === 0;
   if (args.length !== 1) return false;
   const value = args[0] as any;
   switch (channel) {

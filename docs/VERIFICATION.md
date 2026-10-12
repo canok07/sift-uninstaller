@@ -2,6 +2,12 @@
 
 ## English
 
+### Local version 0.5.1.19
+
+2026-10-12: Type checks/build, all 89 regressions, and source/final packaged Electron checks passed on Windows. The new read-only Registry report was opened and run through the actual renderer/preload/main, and its screenshot inspected. All three Registry sources were readable; 109 installation records produced six findings, with an explicit incomplete-report warning for executable metadata that could not be verified. This is not evidence of obsolete keys or permission to delete them. Tests cover unsupported/missing commands, distinct versions/publishers, cached file probes, record/finding/time limits, source failures, escaped UI text, IPC sender/input checks, unchanged program authorization and blocking during active uninstall tracking.
+
+Local unsigned setup: `release/0.5.1.19/Sift Uninstaller-Setup-0.5.1.19.exe`, 111,455,072 bytes, file version 0.5.1.19; ASAR npm version 0.5.1-19. Embedded main/preload/HTML match the tested build. SHA-256: `1E4C04A390CF790062727F418C31DA3AD60EDAB4B76312A1C61A97EE50EA2F7D`. No installer/UAC execution, installed-user-program removal, user-data cleanup or real Registry mutation was performed. GitHub publication is not part of this local update; published setup remains 0.5.1.18.
+
 ### Version 0.5.1.18
 
 2026-10-11: Windows type checks/builds, all 84 regressions and final packaged Electron checks pass. The header source summary and short toolbar preserve scan warnings; the popup's corners and center remain unobscured. Its screenshot was inspected. At 1200×820 the toolbar is 38 logical pixels and the table starts at 164.5, 65 pixels earlier than in 0.5.1.17; 960×640 layout is also checked. Added full fixture lifecycle coverage preserves unselected and reinstalled data. Automated removal/recovery uses test-owned fixtures, not installed user programs.
@@ -34,6 +40,12 @@ Development uses trusted loopback Vite only. Its React refresh preamble needs in
 Reference: [Electron security checklist](https://www.electronjs.org/docs/latest/tutorial/security/).
 
 ## Türkçe
+
+### Yerel 0.5.1.19 sürümü
+
+2026-10-12: Windows tip denetimi/derlemesi, 89 regresyonun tamamı ve kaynak/son paket Electron kontrolleri geçti. Yeni salt okunur Registry raporu gerçek arayüz/köprü/ana süreç üzerinden açılıp çalıştırıldı ve görüntüsü incelendi. Üç Registry kaynağı okunabildi; 109 kurulum kaydında altı bulgu gösterildi. Durumu doğrulanamayan kaldırıcı dosyaları için raporun eksik olduğu açıkça belirtildi. Bu, kayıtların gereksiz olduğu veya silinebileceği anlamına gelmez. Eksik/desteklenmeyen komutlar, sürüm/yayıncı ayrımı, dosya kontrol önbelleği, kayıt/bulgu/süre sınırları, kaynak hataları, güvenli metin gösterimi, IPC gönderen/girdi kontrolü, mevcut program yetkilerinin korunması ve kaldırıcı takibi sürerken engelleme test edildi.
+
+Yerel imzasız setup: `release/0.5.1.19/Sift Uninstaller-Setup-0.5.1.19.exe`, 111.455.072 bayt, dosya sürümü 0.5.1.19; ASAR npm sürümü 0.5.1-19. Paket ana süreç/köprü/HTML dosyaları test edilen derlemeyle aynı. SHA-256: `1E4C04A390CF790062727F418C31DA3AD60EDAB4B76312A1C61A97EE50EA2F7D`. Kurulum/canlı UAC, gerçek kullanıcı programını kaldırma, kullanıcı verisi temizleme veya gerçek Registry değişikliği yapılmadı. Bu yerel güncellemede GitHub yayını yapılmadı; yayımlanan setup 0.5.1.18 olarak kaldı.
 
 ### 0.5.1.18 sürümü
 

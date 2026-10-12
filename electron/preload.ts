@@ -14,6 +14,7 @@ import type {
 
 const api: ElectronAPI = {
   isElectron: true,
+  inspectRegistry: () => ipcRenderer.invoke('registry:inspect'),
   listBackups: () => ipcRenderer.invoke('backups:list'),
   restoreBackup: id => ipcRenderer.invoke('backups:restore', { id }),
   deleteBackup: (id, token) => ipcRenderer.invoke('backups:delete', { id, token }),

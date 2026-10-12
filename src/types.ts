@@ -152,6 +152,28 @@ export interface InventorySource {
   error?: string;
 }
 
+export interface RegistryFinding {
+  id: string;
+  appName: string;
+  registryKey: string;
+  hive: RegistryHive;
+  code: 'missing-command' | 'unsupported-command' | 'missing-executable' | 'unreadable-executable' | 'similar-record';
+  message: string;
+}
+
+export interface RegistryAuditResult {
+  success: boolean;
+  scannedAt: string;
+  registryCount: number;
+  checkedCount: number;
+  skippedSystemCount: number;
+  findings: RegistryFinding[];
+  sources: InventorySource[];
+  warnings: string[];
+  partial: boolean;
+  error?: string;
+}
+
 export interface RendererErrorReport {
   kind: 'error' | 'unhandledrejection' | 'react';
   message: string;
@@ -180,6 +202,7 @@ export interface ElectronAPI {
   getProgramIcon: (appId: string, revision: string) => Promise<{ dataUrl?: string }>;
   getSystemInfo: () => Promise<SystemInfo>;
   getInstalledPrograms: () => Promise<InstalledProgramsResult>;
+  inspectRegistry: () => Promise<RegistryAuditResult>;
   uninstallProgram: (appId: string, options?: UninstallOptions) => Promise<UninstallResult>;
   getUninstallActivity: () => Promise<UninstallActivity>;
   cancelUninstallWait: (operationId: string) => Promise<{ success: boolean; error?: string }>;

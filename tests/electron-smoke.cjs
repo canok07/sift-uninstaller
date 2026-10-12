@@ -20,7 +20,7 @@ fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, 'electron-smoke-'));
 app.setPath('userData', profile);
 app.disableHardwareAcceleration();
-let win, startup, latestInventory, latestFrame;
+let win, startup, latestInventory, latestFrame, latestRegistryAudit;
 let fixtureLauncher, fixtureStarts = 0, closePrompts = 0;
 let restoreCalls = 0, finishRestore;
 const releaseFixture = path.join(profile, 'release-fixture');
@@ -58,6 +58,7 @@ const wrappedElectron = {
     // Real restore handler with substituted Windows work and an accelerated wait deadline.
     const result = await handler(...args);
     if (channel === 'programs:get-installed') latestInventory = result;
+    if (channel === 'registry:inspect' && result.success) latestRegistryAudit = result;
     return result;
   }); } },
   Menu: { setApplicationMenu() {} }
@@ -181,6 +182,21 @@ function paintedBackground(dark) {
 
   const click = label => win.webContents.executeJavaScript(`Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === ${JSON.stringify(label)}).click()`);
   const hasText = text => win.webContents.executeJavaScript(`document.body.innerText.includes(${JSON.stringify(text)})`);
+  await win.webContents.executeJavaScript("document.querySelector('button[aria-label=\"Kayıt Defteri Kontrolü\"]').click()");
+  await waitFor(() => hasText('Kontrolü Başlat'), 'read-only Registry audit dialog');
+  assert.equal(latestRegistryAudit, undefined, 'opening the dialog does not start a scan');
+  await click('Kontrolü Başlat');
+  await waitFor(() => latestRegistryAudit, 'read-only Registry audit result');
+  await waitFor(() => hasText('Yeniden Kontrol Et'), 'Registry audit report rendered');
+  assert.equal(latestRegistryAudit.sources.length, 3);
+  assert.equal(latestRegistryAudit.registryCount, inventory.programs.filter(p => p.category !== 'store').length);
+  assert.ok(await hasText('Hiçbir kayıt silinmez'));
+  const auditControls = await win.webContents.executeJavaScript("Array.from(document.querySelector('[aria-labelledby=\"registry-audit-title\"]').querySelectorAll('button')).map(b => b.textContent.trim())");
+  assert.ok(auditControls.every(label => !/Sil|Kaldır|Düzelt/.test(label)));
+  win.webContents.invalidate(); await new Promise(resolve => setTimeout(resolve, 300));
+  if (latestFrame) fs.writeFileSync(path.join(output, 'registry-audit-preview.png'), latestFrame.toPNG());
+  await win.webContents.executeJavaScript("document.querySelector('button[aria-label=\"Kayıt defteri kontrolünü kapat\"]').click()");
+  await waitFor(async () => !(await hasText('Kontrolü Başlat')), 'Registry audit dismissed');
   const testProgram = inventory.programs.find(program => program.category === 'desktop' && /^(?:msiexec(?:\.exe)?\s|"?[a-z]:\\.*\.exe)/i.test(program.uninstallString || ''));
   assert.ok(testProgram, 'A local EXE/MSI registration is required for the substituted fixture test');
   await win.webContents.executeJavaScript(`const field = document.querySelector('input[placeholder^="Program veya"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(field, ${JSON.stringify(testProgram.displayName)}); field.dispatchEvent(new Event('input', {bubbles:true}));`);
@@ -228,6 +244,8 @@ function paintedBackground(dark) {
   const blocked = await win.webContents.executeJavaScript('window.api.getInstalledPrograms()');
   assert.equal(blocked.success, false);
   assert.ok(blocked.error.includes('takip ediliyor'));
+  const blockedAudit = await win.webContents.executeJavaScript('window.api.inspectRegistry()');
+  assert.equal(blockedAudit.success, false); assert.ok(blockedAudit.error.includes('takip ediliyor'));
   win.webContents.invalidate();
   await new Promise(resolve => setTimeout(resolve, 200));
   if (latestFrame) fs.writeFileSync(path.join(output, 'uninstall-wait-preview.png'), latestFrame.toPNG());
@@ -305,6 +323,9 @@ function paintedBackground(dark) {
   if (latestFrame) fs.writeFileSync(path.join(output, 'candidate-details-preview.png'), latestFrame.toPNG());
   await win.webContents.executeJavaScript("document.querySelector('#candidate-preview button[title=\"Kapat\"]').click()");
   const proof = { version: require('../package.json').version, packagedAssets, sources: inventory.sources,
+    registryAuditReadOnlyPassed: true, registryAuditBackgroundGatePassed: true,
+    registryAuditChecked: latestRegistryAudit.checkedCount, registryAuditFindings: latestRegistryAudit.findings.length,
+    registryAuditPartial: latestRegistryAudit.partial,
     compactWide, compactNarrow, sourcePopup,
     candidateExplanationVisualFixturePassed: true,
     programCount: inventory.programs.length, realIconCount: iconCount,

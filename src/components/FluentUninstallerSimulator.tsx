@@ -21,10 +21,12 @@ import {
   ShieldAlert,
   Info,
   FolderOpen,
-  Clock3
+  Clock3,
+  ListChecks
 } from 'lucide-react';
 import { LeftoverCleanerModal } from './LeftoverCleanerModal';
 import { OperationHistoryModal } from './OperationHistoryModal';
+import { RegistryAuditModal } from './RegistryAuditModal';
 import { BackupRecoveryModal } from './BackupRecoveryModal';
 import { InventoryStatus } from './InventoryStatus';
 import { ProgramIcon } from './ProgramIcon';
@@ -282,6 +284,8 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isRegistryAuditOpen, setIsRegistryAuditOpen] = useState(false);
+  const [isRegistryAuditBusy, setIsRegistryAuditBusy] = useState(false);
   const [isBackupRecoveryOpen, setIsBackupRecoveryOpen] = useState(false);
   const [backupFocusIds, setBackupFocusIds] = useState<string[]>([]);
   const [lastCleanupBackupIds, setLastCleanupBackupIds] = useState<string[]>([]);
@@ -304,7 +308,7 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
   const restoreDecisionRef = useRef<((proceed: boolean) => void) | null>(null);
   const operationRef = useRef(false);
   const scanRef = useRef(false);
-  const isBusy = activeUninstallingAppId !== null || isScanning || isLoadingRegistry || uninstallActivity.active;
+  const isBusy = activeUninstallingAppId !== null || isScanning || isLoadingRegistry || uninstallActivity.active || isRegistryAuditBusy;
 
   // Also recover monitoring after a renderer reload. Never cancel automatically
   // on unmount: that would treat a UI failure as user consent.
@@ -929,6 +933,10 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
 
           {/* Sağ Taraf: Tema, Ayarlar ve Profil */}
           <div className="flex items-center gap-1 ml-auto">
+            <button type="button" disabled={isBusy || isLeftoverModalOpen || confirmUninstallApp !== null} onClick={() => setIsRegistryAuditOpen(true)} aria-label="Kayıt Defteri Kontrolü" title="Kayıt Defteri Kontrolü (salt okunur)"
+              className="w-7 h-7 rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-600 dark:text-zinc-300 flex items-center justify-center disabled:opacity-40">
+              <ListChecks className="w-4 h-4" />
+            </button>
             <button type="button" onClick={() => setIsHistoryOpen(true)} aria-label="İşlem Geçmişi" title="İşlem Geçmişi"
               className="w-7 h-7 rounded-md hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-600 dark:text-zinc-300 flex items-center justify-center">
               <Clock3 className="w-4 h-4" />
@@ -1547,6 +1555,10 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
                 />
               </label>
 
+              <button type="button" disabled={isBusy || isLeftoverModalOpen || confirmUninstallApp !== null} onClick={() => { setIsSettingsOpen(false); setIsRegistryAuditOpen(true); }}
+                className="w-full flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 text-sky-700 dark:text-sky-400 disabled:opacity-40">
+                <ListChecks className="w-4 h-4" /> Kayıt Defteri Kontrolü (Salt Okunur)
+              </button>
               <button type="button" onClick={() => { setIsSettingsOpen(false); setIsHistoryOpen(true); }}
                 className="w-full flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-zinc-800 text-sky-700 dark:text-sky-400 hover:bg-slate-50 dark:hover:bg-zinc-800">
                 <Clock3 className="w-4 h-4" /> İşlem Geçmişini Aç
@@ -1602,6 +1614,10 @@ export const FluentUninstallerSimulator: React.FC<FluentUninstallerSimulatorProp
       {/* MODAL 4: YÖNETİCİ PROFİLİ VE SİSTEM DURUMU MODALI                          */}
       {/* ========================================================================= */}
       {isHistoryOpen && <OperationHistoryModal entries={historyState.entries} issue={historyState.issue} onClose={() => setIsHistoryOpen(false)} />}
+      {isRegistryAuditOpen && <RegistryAuditModal onClose={() => setIsRegistryAuditOpen(false)} onBusy={setIsRegistryAuditBusy} onComplete={result => {
+        recordHistory('Kayıt defteri kontrolü', !result.success ? 'error' : result.partial || result.findings.length > 0 ? 'warning' : 'success',
+          result.error || `${result.checkedCount}/${result.registryCount} kayıt incelendi; ${result.findings.length} bulgu. ${result.partial ? 'Kontrol eksik.' : 'Salt okunur kontrol tamamlandı.'} Hiçbir kayıt değiştirilmedi.`);
+      }} />}
       {isBackupRecoveryOpen && <BackupRecoveryModal initialBackupIds={backupFocusIds} onClose={() => setIsBackupRecoveryOpen(false)} onResult={(success, message, app, action) => {
         recordHistory(action === 'delete' ? 'Yedek silme' : 'Temizlik geri alma', success ? 'success' : 'error', message, app);
         if (success && action === 'restore') { setCanClean(false); setLastRemovedApp(null); setScannedLeftoverItems([]); setPanelStatus('Temizlik izni sıfırlandı; yedek geri alındı.'); }
