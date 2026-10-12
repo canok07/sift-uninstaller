@@ -2,6 +2,10 @@
 
 ## English
 
+### Distribution 0.5.1.20
+
+The [0.5.1.20 development release](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.20) contains the locally verified unsigned setup and matching SHA-256 file. The uploaded asset is named `Sift.Uninstaller-Setup-0.5.1.20.exe`; its bytes and hash are those documented below. Distribution does not expand the acceptance-test claims.
+
 ### Local version 0.5.1.20
 
 2026-10-12: Windows type checks/builds and all 92 regressions passed. Source and final packaged production Electron checks passed. A separate hidden demo window injects denied storage before mounting the actual App, verifies theme switching, session-only warnings and a failed-save notification, and rejects the log bridge to check visible feedback both in Settings and the error-recovery screen. The Settings dialog stays inside a 960×640 window with no horizontal overflow. Storage utility tests cover denied reads/writes, invalid preferences, safe settings defaults and successful persistence. These fault-injection checks use source components, not a real storage corruption of the user's profile.
@@ -46,6 +50,10 @@ Development uses trusted loopback Vite only. Its React refresh preamble needs in
 Reference: [Electron security checklist](https://www.electronjs.org/docs/latest/tutorial/security/).
 
 ## Türkçe
+
+### 0.5.1.20 dağıtımı
+
+[0.5.1.20 geliştirme yayını](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.20), yerelde doğrulanan imzasız setup ve eşleşen SHA-256 dosyasını içerir. Yüklenen dosya adı `Sift.Uninstaller-Setup-0.5.1.20.exe`; baytları ve özeti aşağıdaki doğrulamaya aittir. Yayın yapılması kabul testi kapsamını genişletmez.
 
 ### Yerel 0.5.1.20 sürümü
 

@@ -8,17 +8,17 @@ A Windows desktop app for managing installed programs and reviewing leftover cle
 
 ### Download for Windows
 
-[Download the 0.5.1.18 setup EXE](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.18/Sift.Uninstaller-Setup-0.5.1.18.exe) · [Release details and SHA-256 checksum](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.18)
+[Download the 0.5.1.20 setup EXE](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.20/Sift.Uninstaller-Setup-0.5.1.20.exe) · [Release details and SHA-256 checksum](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.20)
 
 For **Windows 10/11 x64**. Download and run the setup EXE, then launch Sift and approve the administrator prompt. **No Node.js, terminal commands or separate dependency installation are needed.** The EXE is a setup installer, not a portable single-file application.
 
-This is an **unsigned development release**. Windows may show an unknown-publisher or SmartScreen warning; do not bypass a warning for an unverified download. Use this repository's release assets and compare the EXE's SHA-256 with the supplied `SHA256SUMS-0.5.1.18.txt`. A matching checksum verifies the downloaded bytes, not publisher identity or safety. Automated Windows checks use isolated fixtures. Real MSI removal, the complete cleanup/reinstall cycle and clean-install/upgrade/UAC acceptance remain unverified; see [verification details](VERIFICATION.md).
+This is an **unsigned development release**. Windows may show an unknown-publisher or SmartScreen warning; do not bypass a warning for an unverified download. Use this repository's release assets and compare the EXE's SHA-256 with the supplied `SHA256SUMS-0.5.1.20.txt`. A matching checksum verifies the downloaded bytes, not publisher identity or safety. Automated Windows checks use isolated fixtures. Real MSI removal, the complete cleanup/reinstall cycle and clean-install/upgrade/UAC acceptance remain unverified; see [verification details](VERIFICATION.md).
 
 ### About
 
 Sift Uninstaller brings desktop programs, Microsoft Store apps and Windows components into one interface. It uses Windows Registry and AppX information to list installed software, launches native uninstallers and offers a separate, user-reviewed cleanup step.
 
-The project is under active development in the **0.5 series**. Local source is **0.5.1.20**; the published installer remains **0.5.1.18**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases). Development prereleases may not appear at the generic “latest release” link; use the versioned download above. This is a development release, not a claim of production readiness.
+The project is under active development in the **0.5 series**. Current source and setup version: **0.5.1.20**. Installer availability and versions are listed on the [Releases page](https://github.com/canok07/sift-uninstaller/releases). Development prereleases may not appear at the generic “latest release” link; use the versioned download above. This is a development release, not a claim of production readiness.
 
 System Restore waits are limited to 60 seconds. A timeout does not kill the Windows transaction or automatically start uninstalling: explicit continue/cancel confirmation is required. A pending request is not duplicated within the running app, and Windows frequency-limit warnings are failures rather than false success.
 
@@ -46,7 +46,7 @@ Captured from the 0.5.1.18 interface using demo/sample data. The interface is cu
 
 ### Features
 
-- **Read-only Registry review (local 0.5.1.19):** toolbar or Settings → Registry Check. Reviews HKLM, WOW6432Node and current-user HKCU uninstall records, supported local EXE/MSI command metadata, executable availability and same-name/publisher/version registrations. It never runs the commands or changes keys, and cannot authorize cleanup. Store packages and system-component uninstall commands are excluded. Similar records and missing files are not proof that a key is obsolete. Inaccessible files, failed sources, time limits and truncated reports remain explicitly incomplete. Review is limited to 5,000 records, 500 findings and a 20-second file-check budget after inventory (30-second inventory deadline). File probes have a 1.5-second deadline. The published download above remains 0.5.1.18 until a new release is authorized.
+- **Read-only Registry review:** toolbar or Settings → Registry Check. Reviews HKLM, WOW6432Node and current-user HKCU uninstall records, supported local EXE/MSI command metadata, executable availability and same-name/publisher/version registrations. It never runs the commands or changes keys, and cannot authorize cleanup. Store packages and system-component uninstall commands are excluded. Similar records and missing files are not proof that a key is obsolete. Inaccessible files, failed sources, time limits and truncated reports remain explicitly incomplete. Review is limited to 5,000 records, 500 findings and a 20-second file-check budget after inventory (30-second inventory deadline). File probes have a 1.5-second deadline.
 
 - **Organized application list:** separate tabs for Desktop Programs, Store Apps and Windows Components, plus an all-apps view.
 - **Compact workspace and consistent counts:** short action toolbar, source summary in the header, combined tabs/search on wide windows, and current-list counts distinguished from the last scan snapshot. Source details open over the workspace without pushing the list down; incomplete-scan warnings stay visible outside the collapsed details.
@@ -142,17 +142,17 @@ Sift Uninstaller is licensed under the [MIT License](../LICENSE). Existing file-
 
 ### Windows için indir
 
-[0.5.1.18 kurulum EXE'sini indir](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.18/Sift.Uninstaller-Setup-0.5.1.18.exe) · [Sürüm bilgileri ve SHA-256 dosya özeti](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.18)
+[0.5.1.20 kurulum EXE'sini indir](https://github.com/canok07/sift-uninstaller/releases/download/v0.5.1.20/Sift.Uninstaller-Setup-0.5.1.20.exe) · [Sürüm bilgileri ve SHA-256 dosya özeti](https://github.com/canok07/sift-uninstaller/releases/tag/v0.5.1.20)
 
 **Windows 10/11 x64** içindir. Kurulum EXE'sini indirip çalıştırın; ardından Sift'i açarak yönetici izni isteğini onaylayın. **Node.js, terminal komutu veya ayrıca bağımlılık kurulumu gerekmez.** EXE bir kurulum dosyasıdır; tek dosyalık taşınabilir uygulama değildir.
 
-Bu, **dijital imzası olmayan bir geliştirme sürümüdür**. Windows bilinmeyen yayıncı veya SmartScreen uyarısı gösterebilir; doğrulanmamış bir indirme için uyarıyı aşmayın. Bu deponun sürüm dosyalarını kullanın ve EXE'nin SHA-256 özetini beraberindeki `SHA256SUMS-0.5.1.18.txt` ile karşılaştırın. Eşleşme indirilen dosyanın bütünlüğünü doğrular; yayıncı kimliğini veya güvenliğini kanıtlamaz. Otomatik Windows kontrolleri ayrı test verileri kullanır. Gerçek MSI kaldırma, tam temizlik/yeniden kurma döngüsü ve temiz kurulum/yükseltme/UAC kabulü henüz doğrulanmadı; [doğrulama ayrıntılarına](VERIFICATION.md) bakın.
+Bu, **dijital imzası olmayan bir geliştirme sürümüdür**. Windows bilinmeyen yayıncı veya SmartScreen uyarısı gösterebilir; doğrulanmamış bir indirme için uyarıyı aşmayın. Bu deponun sürüm dosyalarını kullanın ve EXE'nin SHA-256 özetini beraberindeki `SHA256SUMS-0.5.1.20.txt` ile karşılaştırın. Eşleşme indirilen dosyanın bütünlüğünü doğrular; yayıncı kimliğini veya güvenliğini kanıtlamaz. Otomatik Windows kontrolleri ayrı test verileri kullanır. Gerçek MSI kaldırma, tam temizlik/yeniden kurma döngüsü ve temiz kurulum/yükseltme/UAC kabulü henüz doğrulanmadı; [doğrulama ayrıntılarına](VERIFICATION.md) bakın.
 
 ### Hakkında
 
 Sift Uninstaller; masaüstü programlarını, Microsoft Store uygulamalarını ve Windows bileşenlerini tek arayüzde yönetmenize yardımcı olan bir Windows masaüstü uygulamasıdır. Kurulu yazılımları Windows Registry ve AppX bilgilerinden listeler, yerel kaldırıcıları çalıştırır ve ayrı bir aşamada kullanıcı onaylı kalıntı temizliği sunar.
 
-Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Yerel kaynak **0.5.1.20**; yayımlanan kurulum **0.5.1.18**'dir. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır. Geliştirme sürümleri genel “latest release” bağlantısında görünmeyebilir; yukarıdaki sürüme özel bağlantıyı kullanın. Bu bir geliştirme sürümüdür; üretim kullanımına hazır olduğu iddia edilmez.
+Proje **0.5 serisinde**, aktif geliştirme aşamasındadır. Güncel kaynak ve setup sürümü: **0.5.1.20**. İndirilebilir kurulum dosyaları ve sürümleri [Releases sayfasında](https://github.com/canok07/sift-uninstaller/releases) yer alır. Geliştirme sürümleri genel “latest release” bağlantısında görünmeyebilir; yukarıdaki sürüme özel bağlantıyı kullanın. Bu bir geliştirme sürümüdür; üretim kullanımına hazır olduğu iddia edilmez.
 
 Kısa araç çubuğu, başlığa taşınan kaynak özeti ve geniş pencerelerde birleşik sekme/arama alanı listeye daha çok yer bırakır. Kaynak ayrıntıları listeyi aşağı itmeden açılır; eksik tarama uyarısı ayrıntılar kapalıyken de görünür. Güncel liste sayaçları son tarama anlık görüntüsünden ayrılır. Temizlik tamamlandığında boş seçim kontrolleri yerine sonuç ve o işleme ait yedeklere erişim gösterilir; geri alma yine ayrı onay ve güvenlik kontrolü gerektirir.
 
@@ -166,7 +166,7 @@ Geri yükleme noktası sonucu en fazla 60 saniye beklenir. Süre dolduğunda Win
 
 ### Özellikler
 
-- **Salt okunur Registry kontrolü (yerel 0.5.1.19):** araç çubuğu veya Ayarlar → Kayıt Defteri Kontrolü. HKLM, WOW6432Node ve mevcut kullanıcının HKCU kaldırma kayıtlarını; yerel EXE/MSI komut bilgilerini, kaldırıcı dosyasının varlığını ve aynı ad/yayıncı/sürüm kayıtlarını inceler. Komut çalıştırmaz, anahtar değiştirmez ve temizlik izni vermez. Store paketleri ve sistem bileşenlerinin kaldırma komutları kapsam dışıdır. Benzer kayıt ve eksik dosya gereksiz kayıt kanıtı değildir. Erişim/kaynak hatası, süre sınırı veya kısaltılmış rapor açıkça eksik gösterilir. En fazla 5.000 kayıt, 500 bulgu; envanter sonrası 20 saniye dosya kontrolü (envanter için 30 saniye), dosya başına 1,5 saniye sınırı vardır. Yeni yayın onaylanana kadar yukarıdaki indirme bağlantısı 0.5.1.18 olarak kalır.
+- **Salt okunur Registry kontrolü:** araç çubuğu veya Ayarlar → Kayıt Defteri Kontrolü. HKLM, WOW6432Node ve mevcut kullanıcının HKCU kaldırma kayıtlarını; yerel EXE/MSI komut bilgilerini, kaldırıcı dosyasının varlığını ve aynı ad/yayıncı/sürüm kayıtlarını inceler. Komut çalıştırmaz, anahtar değiştirmez ve temizlik izni vermez. Store paketleri ve sistem bileşenlerinin kaldırma komutları kapsam dışıdır. Benzer kayıt ve eksik dosya gereksiz kayıt kanıtı değildir. Erişim/kaynak hatası, süre sınırı veya kısaltılmış rapor açıkça eksik gösterilir. En fazla 5.000 kayıt, 500 bulgu; envanter sonrası 20 saniye dosya kontrolü (envanter için 30 saniye), dosya başına 1,5 saniye sınırı vardır.
 
 - **Düzenli uygulama listesi:** Masaüstü Programları, Store Uygulamaları ve Windows Bileşenleri için ayrı sekmeler; ayrıca tüm uygulamaları gösteren görünüm.
 - **Kaynak bazında tarama:** HKLM, 32 bit Registry, HKCU ve Store/AppX sonuçlarını ayrı gösterme. Bir kaynak okunamazsa erişilebilen kayıtlar korunur ve kalıcı eksik tarama uyarısı görünür; hata, boş başarılı liste gibi gösterilmez.
